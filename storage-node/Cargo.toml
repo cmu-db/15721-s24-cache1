@@ -1,0 +1,8 @@
+[package]
+name = "storage-node"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+arrow = "50"
+anyhow = "1"
