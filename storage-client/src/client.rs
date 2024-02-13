@@ -16,13 +16,13 @@ impl StorageClientImpl {
     ) -> StorageResult<Self> {
         let storage_server_endpoint = storage_server_endpoint_str.parse::<Uri>().map_err(|_| {
             DataFusionError::Configuration(format!(
-                "cannot connect to the storage server with uri {}",
+                "cannot resolve storage server endpoint: {}",
                 storage_server_endpoint_str
             ))
         })?;
         let catalog_server_endpoint = catalog_server_endpoint_str.parse::<Uri>().map_err(|_| {
             DataFusionError::Configuration(format!(
-                "cannot connect to the catalog server with uri {}",
+                "cannot resolve catalog server endpoint: {}",
                 catalog_server_endpoint_str
             ))
         })?;
