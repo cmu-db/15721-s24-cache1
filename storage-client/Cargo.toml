@@ -1,0 +1,11 @@
+[package]
+name = "storage-client"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+arrow = "50"
+anyhow = "1"
+hyper = "1.1.0"
+datafusion = "35"
+async-trait = "0.1"
