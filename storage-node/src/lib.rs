@@ -1,15 +1,13 @@
-#[allow(dead_code)]
+// TODO: Remove these annotations after implementation.
+#![allow(unused)]
+#![allow(clippy::new_without_default)]
 
-fn advanced_database() -> u32 {
-    15721
-}
+pub mod cache;
+pub mod server;
+pub mod storage_manager;
+pub mod storage_reader;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+use datafusion::error::DataFusionError;
 
-    #[test]
-    fn test_advanced_database() {
-        assert_eq!(advanced_database(), 15721);
-    }
-}
+// TODO: Do we define our own error type?
+pub type StorageResult<T> = anyhow::Result<T, DataFusionError>;
