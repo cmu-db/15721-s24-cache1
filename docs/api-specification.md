@@ -6,7 +6,7 @@
 
 The I/O service will provide the execution engine with a client library, to which they can issue requests for data. We allow the execution engine to query data on different granularities, including table, column, and tuple. We will provide both synchronous and asynchronous methods for the execution engine to get storage data.
 
-See [this PR](https://github.com/cmu-db/15721-s24-cache1/pull/2 ) for more details.
+See [this PR](https://github.com/cmu-db/15721-s24-cache1/pull/2) for more details.
 
 ## Encoding
 
