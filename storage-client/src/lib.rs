@@ -1,11 +1,8 @@
 pub mod client;
 
+use anyhow::Result;
 use arrow::record_batch::RecordBatch;
-use datafusion::{error::DataFusionError, physical_plan::SendableRecordBatchStream};
-
-/// Result type that the storage node would return to the execution engine. We use
-/// `DataFusionError` here to align with the execution engine.
-pub type StorageResult<T> = anyhow::Result<T, DataFusionError>;
+use tokio::sync::mpsc::Receiver;
 
 /// Id types for table, column, and record. Need to be consistent among all components
 /// (e.g. execution engine). We don't want to make any type generic here just for the id,
@@ -36,13 +33,8 @@ pub enum StorageRequest {
 #[async_trait::async_trait]
 pub trait StorageClient: Send + Sync + 'static {
     /// Returns the requested data as a stream.
-    ///
-    /// FIXME: Should we use `StorageResult<mpsc::Receiver<RecordBatch>>` instead?
-    async fn request_data(
-        &self,
-        request: StorageRequest,
-    ) -> StorageResult<SendableRecordBatchStream>;
+    async fn request_data(&self, request: StorageRequest) -> Result<Receiver<RecordBatch>>;
 
     /// Returns all the requested data as a whole.
-    async fn request_data_sync(&self, request: StorageRequest) -> StorageResult<Vec<RecordBatch>>;
+    async fn request_data_sync(&self, request: StorageRequest) -> Result<Vec<RecordBatch>>;
 }
