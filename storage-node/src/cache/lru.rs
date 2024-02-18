@@ -47,7 +47,7 @@ impl ParpulseCache<ParpulseCacheKey, ParpulseCacheValue> for LruCache<ParpulseCa
             println!("File size: {:?}, Max capacity: {:?}", value.1, self.max_capacity);
             return;
         }
-        // If the key already exists, update the value and move it to the back
+        // If the key already exists, update the file size
         if let Some((_, file_size)) = self.cache_map.get(&key) {
             self.curr_capacity -= file_size;
         }
