@@ -1,4 +1,4 @@
-use crate::storage_manager::StorageManager;
+use crate::{cache::lru::LruCache, storage_manager::StorageManager, StorageResult};
 
 // FIXME: Discuss with catalog team for more information.
 pub enum RequestParams {
@@ -6,23 +6,13 @@ pub enum RequestParams {
     S3(String),
 }
 
-pub struct StorageServer {
-    /// We should allow concurrent requests fed into the storage manager,
-    /// which should be responsible for handling multiple requests at the
-    /// same time.
-    storage_manager: StorageManager,
-}
+pub async fn storage_node_serve() -> StorageResult<()> {
+    // TODO: Read the type of the cache from config.
+    let cache = LruCache::new();
+    let storage_manager = StorageManager::new(cache);
 
-impl StorageServer {
-    pub fn new() -> Self {
-        Self {
-            storage_manager: StorageManager::new(),
-        }
-    }
-
-    pub async fn start(&self) {
-        // 1. Start the server here and listen on the requests.
-        // 2. Feed the request into the storage manager.
-        todo!()
-    }
+    // TODO:
+    // 1. Start the server here and listen on the requests.
+    // 2. Feed the request into the storage manager.
+    todo!()
 }

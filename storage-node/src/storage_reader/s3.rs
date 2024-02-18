@@ -1,5 +1,3 @@
-use bytes::Bytes;
-
 use crate::StorageResult;
 
 pub struct S3Reader {

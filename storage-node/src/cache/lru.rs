@@ -1,3 +1,8 @@
+use datafusion::execution::DiskManager;
+
+use super::{ParpulseCache, ParpulseCacheKey, ParpulseCacheValue};
+
+// Just an example. Feel free to modify.
 pub struct LruCache {}
 
 impl LruCache {
@@ -5,15 +10,25 @@ impl LruCache {
         Self {}
     }
 
-    pub fn get(&self) -> Option<()> {
+    pub fn get(&mut self, key: &ParpulseCacheKey) -> Option<ParpulseCacheValue> {
         todo!()
     }
 
-    pub fn put(&mut self) -> bool {
+    pub fn put(&mut self, key: ParpulseCacheKey, value: ParpulseCacheValue) -> bool {
         todo!()
     }
 
-    pub fn pop(&mut self) -> Option<()> {
+    pub fn pop(&mut self) -> Option<ParpulseCacheValue> {
         todo!()
+    }
+}
+
+impl ParpulseCache for LruCache {
+    fn get_value(&mut self, key: &ParpulseCacheKey) -> Option<ParpulseCacheValue> {
+        self.get(key)
+    }
+
+    fn set_value(&mut self, key: ParpulseCacheKey, value: ParpulseCacheValue) {
+        self.put(key, value);
     }
 }

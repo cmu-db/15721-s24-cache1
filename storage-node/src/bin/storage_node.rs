@@ -1,8 +1,9 @@
-use storage_node::server::StorageServer;
+use storage_node::server::storage_node_serve;
+
+// TODO: Add config here.
 
 #[tokio::main]
 async fn main() {
-    println!("starting the storage server...");
-    let server = StorageServer::new();
-    server.start().await;
+    println!("starting storage node server...");
+    storage_node_serve().await.unwrap();
 }
