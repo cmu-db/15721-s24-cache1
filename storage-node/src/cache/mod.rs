@@ -2,8 +2,12 @@ use self::lru::LruCache;
 
 pub mod lru;
 
+/// [`ParpulseCacheKey`] is a path to the remote object store.
 pub type ParpulseCacheKey = String;
-pub type ParpulseCacheValue = String;
+/// [`ParpulseCacheValue`] contains a path to the local disk indicating where
+/// the cached item is stored, and also the size of the cached item.
+/// This is just a prototype and we might refine it later.
+pub type ParpulseCacheValue = (String, usize);
 
 /// [`ParpulseCache`] offers a unified interface for different cache algorithms.
 ///
