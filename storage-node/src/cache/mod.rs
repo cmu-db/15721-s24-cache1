@@ -10,7 +10,7 @@ pub type ParpulseCacheKey = String;
 /// This is just a prototype and we might refine it later.
 pub type ParpulseCacheValue = (String, usize);
 
-pub trait ParpulseCache<ParpulseCacheKey, ParpulseCacheValue> 
+pub trait ParpulseCache
 where
     ParpulseCacheKey: Eq + Hash,
 {

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::{
-    cache::{lru::LruCache, ParpulseCache, ParpulseCacheKey, ParpulseCacheValue},
+    cache::{lru::LruCache, ParpulseCache},
     server::RequestParams,
     StorageResult,
 };
@@ -13,13 +13,13 @@ use crate::{
 /// We should allow concurrent requests fed into the storage manager,
 /// which should be responsible for handling multiple requests at the
 /// same time.
-pub struct StorageManager<C: ParpulseCache<ParpulseCacheKey, ParpulseCacheValue>> {
+pub struct StorageManager<C: ParpulseCache> {
     // TODO: Consider making the cache lock-free. See the comments for
     // `ParpulseCache`.
     cache: Arc<RwLock<C>>,
 }
 
-impl<C: ParpulseCache<ParpulseCacheKey, ParpulseCacheValue>> StorageManager<C> {
+impl<C: ParpulseCache> StorageManager<C> {
     pub fn new(cache: C) -> Self {
         Self {
             cache: Arc::new(RwLock::new(cache)),

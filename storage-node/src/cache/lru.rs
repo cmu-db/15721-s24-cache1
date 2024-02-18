@@ -24,7 +24,7 @@ where
     }
 }
 
-impl ParpulseCache<ParpulseCacheKey, ParpulseCacheValue> for LruCache<ParpulseCacheKey, ParpulseCacheValue>
+impl ParpulseCache for LruCache<ParpulseCacheKey, ParpulseCacheValue>
 {
     fn get<Q>(&mut self, key: &Q) -> Option<&ParpulseCacheValue>
     where
