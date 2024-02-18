@@ -1,6 +1,7 @@
-use self::lru::LruCache;
-
 pub mod lru;
+
+use std::borrow::Borrow;
+use std::hash::Hash;
 
 /// [`ParpulseCacheKey`] is a path to the remote object store.
 pub type ParpulseCacheKey = String;
@@ -9,14 +10,26 @@ pub type ParpulseCacheKey = String;
 /// This is just a prototype and we might refine it later.
 pub type ParpulseCacheValue = (String, usize);
 
-/// [`ParpulseCache`] offers a unified interface for different cache algorithms.
-///
-/// Feel free to modify the methods.
-pub trait ParpulseCache {
-    // TODO: Consider making the cache lock-free so that we can have `&self`
-    // instead of `&mut self` here, which enables multiple calls to the cache at
-    // the same time.
-    fn get_value(&mut self, key: &ParpulseCacheKey) -> Option<ParpulseCacheValue>;
-
-    fn set_value(&mut self, key: ParpulseCacheKey, value: ParpulseCacheValue);
+pub trait ParpulseCache<ParpulseCacheKey, ParpulseCacheValue> 
+where
+    ParpulseCacheKey: Eq + Hash,
+{
+    fn get<Q>(&mut self, key: &Q) -> Option<&ParpulseCacheValue>
+    where
+        ParpulseCacheKey: Borrow<Q>,
+        Q: Hash + Eq + ?Sized;
+    fn put(&mut self, key: ParpulseCacheKey, value: ParpulseCacheValue);
+    /// Returns a reference to the value in the cache without updating the
+    /// access order
+    fn peek<Q>(&mut self, key: &Q) -> Option<&ParpulseCacheValue>
+    where
+        ParpulseCacheKey: Borrow<Q>,
+        Q: Hash + Eq + ?Sized;
+    /// Returns the number of items in the cache
+    fn len(&self) -> usize;
+    /// Returns the current size (i.e. capacity) of the cache
+    fn size(&self) -> usize;
+    fn get_max_capacity(&self) -> usize;
+    fn set_max_capacity(&mut self, capacity: usize);
+    fn clear(&mut self);
 }
