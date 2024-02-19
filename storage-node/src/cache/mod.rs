@@ -11,8 +11,6 @@ pub type ParpulseCacheKey = String;
 pub type ParpulseCacheValue = (String, usize);
 
 pub trait ParpulseCache
-where
-    ParpulseCacheKey: Eq + Hash,
 {
     fn get<Q>(&mut self, key: &Q) -> Option<&ParpulseCacheValue>
     where
@@ -21,7 +19,7 @@ where
     fn put(&mut self, key: ParpulseCacheKey, value: ParpulseCacheValue);
     /// Returns a reference to the value in the cache without updating the
     /// access order
-    fn peek<Q>(&mut self, key: &Q) -> Option<&ParpulseCacheValue>
+    fn peek<Q>(&self, key: &Q) -> Option<&ParpulseCacheValue>
     where
         ParpulseCacheKey: Borrow<Q>,
         Q: Hash + Eq + ?Sized;

@@ -66,7 +66,7 @@ impl ParpulseCache for LruCache<ParpulseCacheKey, ParpulseCacheValue> {
         }
     }
 
-    fn peek<Q>(&mut self, key: &Q) -> Option<&ParpulseCacheValue>
+    fn peek<Q>(&self, key: &Q) -> Option<&ParpulseCacheValue>
     where
         ParpulseCacheKey: Borrow<Q>,
         Q: Hash + Eq + ?Sized,
