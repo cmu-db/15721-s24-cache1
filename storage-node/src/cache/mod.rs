@@ -10,8 +10,7 @@ pub type ParpulseCacheKey = String;
 /// This is just a prototype and we might refine it later.
 pub type ParpulseCacheValue = (String, usize);
 
-pub trait ParpulseCache
-{
+pub trait ParpulseCache {
     fn get<Q>(&mut self, key: &Q) -> Option<&ParpulseCacheValue>
     where
         ParpulseCacheKey: Borrow<Q>,
