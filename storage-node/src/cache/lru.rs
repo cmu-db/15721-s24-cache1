@@ -101,6 +101,7 @@ impl ParpulseCache for LruCache<ParpulseCacheKey, ParpulseCacheValue> {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::{LruCache, ParpulseCache, ParpulseCacheKey, ParpulseCacheValue};
 
