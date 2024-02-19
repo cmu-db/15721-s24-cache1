@@ -152,7 +152,9 @@ mod tests {
         cache.put("key5".to_string(), ("value5".to_string(), 5));
         assert_eq!(cache.size(), 9); // Only key4 and key5 are in the cache
         assert_eq!(cache.len(), 2);
+        assert_eq!(cache.is_empty(), false);
         cache.clear();
+        assert_eq!(cache.is_empty(), true);
         assert_eq!(cache.size(), 0);
         assert_eq!(cache.len(), 0);
     }
@@ -167,5 +169,6 @@ mod tests {
         assert_eq!(cache.size(), 3);
         cache.put("key1".to_string(), ("value4".to_string(), 100)); // Should not be inserted
         assert_eq!(cache.get("key1"), Some(&("value3".to_string(), 3)));
+        assert_eq!(cache.get("key2"), None);
     }
 }
