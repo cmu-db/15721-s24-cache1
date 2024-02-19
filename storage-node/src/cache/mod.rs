@@ -1,6 +1,5 @@
 pub mod lru;
 
-use std::borrow::Borrow;
 use std::hash::Hash;
 
 /// [`ParpulseCacheKey`] is a path to the remote object store.
@@ -11,17 +10,12 @@ pub type ParpulseCacheKey = String;
 pub type ParpulseCacheValue = (String, usize);
 
 pub trait ParpulseCache {
-    fn get<Q>(&mut self, key: &Q) -> Option<&ParpulseCacheValue>
-    where
-        ParpulseCacheKey: Borrow<Q>,
-        Q: Hash + Eq + ?Sized;
+    fn get(&mut self, key: &ParpulseCacheKey) -> Option<&ParpulseCacheValue>;
+
     fn put(&mut self, key: ParpulseCacheKey, value: ParpulseCacheValue);
     /// Returns a reference to the value in the cache without updating the
     /// access order
-    fn peek<Q>(&self, key: &Q) -> Option<&ParpulseCacheValue>
-    where
-        ParpulseCacheKey: Borrow<Q>,
-        Q: Hash + Eq + ?Sized;
+    fn peek(&self, key: &ParpulseCacheKey) -> Option<&ParpulseCacheValue>;
     /// Returns the number of items in the cache
     fn len(&self) -> usize;
     /// Returns the current size (i.e. capacity) of the cache

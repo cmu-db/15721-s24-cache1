@@ -1,6 +1,7 @@
 use hashlink::linked_hash_map;
 use hashlink::LinkedHashMap;
 use std::borrow::Borrow;
+use std::fmt::Debug;
 use std::hash::Hash;
 
 use super::{ParpulseCache, ParpulseCacheKey, ParpulseCacheValue};
@@ -13,7 +14,7 @@ pub struct LruCache<K, V> {
 
 impl<K, V> LruCache<K, V>
 where
-    K: Hash + Eq + Clone,
+    K: Hash + Eq + Clone + Debug,
 {
     pub fn new(max_capacity: usize) -> LruCache<K, V> {
         LruCache {
@@ -22,14 +23,8 @@ where
             curr_capacity: 0,
         }
     }
-}
 
-impl ParpulseCache for LruCache<ParpulseCacheKey, ParpulseCacheValue> {
-    fn get<Q>(&mut self, key: &Q) -> Option<&ParpulseCacheValue>
-    where
-        ParpulseCacheKey: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
-    {
+    fn lru_get(&mut self, key: &K) -> Option<&V> {
         match self.cache_map.raw_entry_mut().from_key(key) {
             linked_hash_map::RawEntryMut::Occupied(mut entry) => {
                 entry.to_back();
@@ -37,6 +32,16 @@ impl ParpulseCache for LruCache<ParpulseCacheKey, ParpulseCacheValue> {
             }
             linked_hash_map::RawEntryMut::Vacant(_) => None,
         }
+    }
+
+    fn lru_peek(&self, key: &K) -> Option<&V> {
+        self.cache_map.get(key)
+    }
+}
+
+impl ParpulseCache for LruCache<ParpulseCacheKey, ParpulseCacheValue> {
+    fn get(&mut self, key: &ParpulseCacheKey) -> Option<&ParpulseCacheValue> {
+        self.lru_get(key)
     }
 
     fn put(&mut self, key: ParpulseCacheKey, value: ParpulseCacheValue) {
@@ -66,12 +71,8 @@ impl ParpulseCache for LruCache<ParpulseCacheKey, ParpulseCacheValue> {
         }
     }
 
-    fn peek<Q>(&self, key: &Q) -> Option<&ParpulseCacheValue>
-    where
-        ParpulseCacheKey: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
-    {
-        self.cache_map.get(key)
+    fn peek(&self, key: &ParpulseCacheKey) -> Option<&ParpulseCacheValue> {
+        self.lru_peek(key)
     }
 
     fn len(&self) -> usize {
@@ -168,7 +169,10 @@ mod tests {
         assert_eq!(cache.len(), 1);
         assert_eq!(cache.size(), 3);
         cache.put("key1".to_string(), ("value4".to_string(), 100)); // Should not be inserted
-        assert_eq!(cache.get("key1"), Some(&("value3".to_string(), 3)));
-        assert_eq!(cache.get("key2"), None);
+        assert_eq!(
+            cache.get(&"key1".to_string()),
+            Some(&("value3".to_string(), 3))
+        );
+        assert_eq!(cache.get(&("key2".to_string())), None);
     }
 }
