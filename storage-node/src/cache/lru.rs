@@ -1,7 +1,7 @@
 use hashlink::linked_hash_map;
 use hashlink::LinkedHashMap;
-use std::hash::Hash;
 use std::borrow::Borrow;
+use std::hash::Hash;
 
 use super::{ParpulseCache, ParpulseCacheKey, ParpulseCacheValue};
 
@@ -24,8 +24,7 @@ where
     }
 }
 
-impl ParpulseCache for LruCache<ParpulseCacheKey, ParpulseCacheValue>
-{
+impl ParpulseCache for LruCache<ParpulseCacheKey, ParpulseCacheValue> {
     fn get<Q>(&mut self, key: &Q) -> Option<&ParpulseCacheValue>
     where
         ParpulseCacheKey: Borrow<Q>,
@@ -43,8 +42,14 @@ impl ParpulseCache for LruCache<ParpulseCacheKey, ParpulseCacheValue>
     fn put(&mut self, key: ParpulseCacheKey, value: ParpulseCacheValue) {
         // If the file size is greater than the max capacity, return
         if value.1 > self.max_capacity {
-            println!("Warning: The file size of key {:?} is greater than the max capacity", key);
-            println!("File size: {:?}, Max capacity: {:?}", value.1, self.max_capacity);
+            println!(
+                "Warning: The file size of key {:?} is greater than the max capacity",
+                key
+            );
+            println!(
+                "File size: {:?}, Max capacity: {:?}",
+                value.1, self.max_capacity
+            );
             return;
         }
         // If the key already exists, update the file size
@@ -111,10 +116,22 @@ mod tests {
         cache.set_max_capacity(14);
         cache.put("key5".to_string(), ("value5".to_string(), 5));
         assert_eq!(cache.peek(&"key1".to_string()), None);
-        assert_eq!(cache.peek(&"key2".to_string()), Some(&("value2".to_string(), 2)));
-        assert_eq!(cache.peek(&"key3".to_string()), Some(&("value3".to_string(), 3)));
-        assert_eq!(cache.peek(&"key4".to_string()), Some(&("value4".to_string(), 4)));
-        assert_eq!(cache.peek(&"key5".to_string()), Some(&("value5".to_string(), 5)));
+        assert_eq!(
+            cache.peek(&"key2".to_string()),
+            Some(&("value2".to_string(), 2))
+        );
+        assert_eq!(
+            cache.peek(&"key3".to_string()),
+            Some(&("value3".to_string(), 3))
+        );
+        assert_eq!(
+            cache.peek(&"key4".to_string()),
+            Some(&("value4".to_string(), 4))
+        );
+        assert_eq!(
+            cache.peek(&"key5".to_string()),
+            Some(&("value5".to_string(), 5))
+        );
     }
 
     #[test]
@@ -147,5 +164,4 @@ mod tests {
         cache.put("key1".to_string(), ("value4".to_string(), 100)); // Should not be inserted
         assert_eq!(cache.get("key1"), Some(&("value3".to_string(), 3)));
     }
-
 }
