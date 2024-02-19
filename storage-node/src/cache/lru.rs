@@ -152,9 +152,9 @@ mod tests {
         cache.put("key5".to_string(), ("value5".to_string(), 5));
         assert_eq!(cache.size(), 9); // Only key4 and key5 are in the cache
         assert_eq!(cache.len(), 2);
-        assert_eq!(cache.is_empty(), false);
+        assert!(!cache.is_empty());
         cache.clear();
-        assert_eq!(cache.is_empty(), true);
+        assert!(cache.is_empty());
         assert_eq!(cache.size(), 0);
         assert_eq!(cache.len(), 0);
     }
