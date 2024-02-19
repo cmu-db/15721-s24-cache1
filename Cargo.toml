@@ -1,6 +1,7 @@
 [workspace]
 members = [
-    "storage-node"
+    "storage-node",
+    "storage-client"
 ]
 
 resolver = "2"
