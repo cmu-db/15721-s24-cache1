@@ -78,6 +78,10 @@ impl ParpulseCache for LruCache<ParpulseCacheKey, ParpulseCacheValue> {
         self.cache_map.len()
     }
 
+    fn is_empty(&self) -> bool {
+        self.cache_map.is_empty()
+    }
+
     fn size(&self) -> usize {
         self.curr_capacity
     }

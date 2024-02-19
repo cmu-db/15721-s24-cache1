@@ -29,6 +29,7 @@ where
     fn len(&self) -> usize;
     /// Returns the current size (i.e. capacity) of the cache
     fn size(&self) -> usize;
+    fn is_empty(&self) -> bool;
     fn get_max_capacity(&self) -> usize;
     fn set_max_capacity(&mut self, capacity: usize);
     fn clear(&mut self);
