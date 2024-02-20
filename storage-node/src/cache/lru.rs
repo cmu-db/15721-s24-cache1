@@ -1,21 +1,19 @@
 use hashlink::linked_hash_map;
 use hashlink::LinkedHashMap;
 use std::borrow::Borrow;
-use std::fmt::Debug;
 use std::hash::Hash;
 
+use super::CacheKey;
+use super::CacheValue;
 use super::{ParpulseCache, ParpulseCacheKey, ParpulseCacheValue};
 
-pub struct LruCache<K, V> {
+pub struct LruCache<K: CacheKey, V: CacheValue> {
     cache_map: LinkedHashMap<K, V>,
     max_capacity: usize,
     curr_capacity: usize,
 }
 
-impl<K, V> LruCache<K, V>
-where
-    K: Hash + Eq + Clone + Debug,
-{
+impl<K: CacheKey, V: CacheValue> LruCache<K, V> {
     pub fn new(max_capacity: usize) -> LruCache<K, V> {
         LruCache {
             cache_map: LinkedHashMap::new(),
@@ -24,7 +22,7 @@ where
         }
     }
 
-    fn lru_get(&mut self, key: &K) -> Option<&V> {
+    fn get_value(&mut self, key: &K) -> Option<&V> {
         match self.cache_map.raw_entry_mut().from_key(key) {
             linked_hash_map::RawEntryMut::Occupied(mut entry) => {
                 entry.to_back();
@@ -34,45 +32,51 @@ where
         }
     }
 
-    fn lru_peek(&self, key: &K) -> Option<&V> {
+    fn put_value(&mut self, key: K, value: V) -> bool {
+        // If the file size is greater than the max capacity, return
+        if value.size() > self.max_capacity {
+            // TODO(Yuanxin): Better log approach.
+            println!("Warning: The size of the value is greater than the max capacity",);
+            println!(
+                "Key: {:?}, Value: {:?}, Value size: {:?}, Max capacity: {:?}",
+                key,
+                value.as_value(),
+                value.size(),
+                self.max_capacity
+            );
+            return false;
+        }
+        // If the key already exists, update the file size
+        if let Some(cache_value) = self.cache_map.get(&key) {
+            self.curr_capacity -= cache_value.size();
+        }
+        self.curr_capacity += value.size();
+        self.cache_map.insert(key.clone(), value);
+        while self.curr_capacity > self.max_capacity {
+            if let Some((key, cache_value)) = self.cache_map.pop_front() {
+                println!("-------- Evicting Key: {:?} --------", key);
+                self.curr_capacity -= cache_value.size();
+            }
+        }
+        true
+    }
+
+    fn peek_value(&self, key: &K) -> Option<&V> {
         self.cache_map.get(key)
     }
 }
 
 impl ParpulseCache for LruCache<ParpulseCacheKey, ParpulseCacheValue> {
     fn get(&mut self, key: &ParpulseCacheKey) -> Option<&ParpulseCacheValue> {
-        self.lru_get(key)
+        self.get_value(key)
     }
 
-    fn put(&mut self, key: ParpulseCacheKey, value: ParpulseCacheValue) {
-        // If the file size is greater than the max capacity, return
-        if value.1 > self.max_capacity {
-            println!(
-                "Warning: The file size of key {:?} is greater than the max capacity",
-                key
-            );
-            println!(
-                "File size: {:?}, Max capacity: {:?}",
-                value.1, self.max_capacity
-            );
-            return;
-        }
-        // If the key already exists, update the file size
-        if let Some((_, file_size)) = self.cache_map.get(&key) {
-            self.curr_capacity -= file_size;
-        }
-        self.curr_capacity += value.1;
-        self.cache_map.insert(key.clone(), value);
-        while self.curr_capacity > self.max_capacity {
-            if let Some((key, (_, file_size))) = self.cache_map.pop_front() {
-                println!("-------- Evicting Key: {:?} --------", key);
-                self.curr_capacity -= file_size;
-            }
-        }
+    fn put(&mut self, key: ParpulseCacheKey, value: ParpulseCacheValue) -> bool {
+        self.put_value(key, value)
     }
 
     fn peek(&self, key: &ParpulseCacheKey) -> Option<&ParpulseCacheValue> {
-        self.lru_peek(key)
+        self.peek_value(key)
     }
 
     fn len(&self) -> usize {
