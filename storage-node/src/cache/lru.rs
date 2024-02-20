@@ -7,10 +7,13 @@ use super::CacheKey;
 use super::CacheValue;
 use super::{ParpulseCache, ParpulseCacheKey, ParpulseCacheValue};
 
+/// [`LruCache`] adopts the least-recent-used algorithm to cache sized
+/// objects. The cache will start evicting if a new object comes that makes
+/// the cache's size exceeds its max capacity, from the oldest to the newest.
 pub struct LruCache<K: CacheKey, V: CacheValue> {
     cache_map: LinkedHashMap<K, V>,
     max_capacity: usize,
-    curr_capacity: usize,
+    size: usize,
 }
 
 impl<K: CacheKey, V: CacheValue> LruCache<K, V> {
@@ -18,7 +21,7 @@ impl<K: CacheKey, V: CacheValue> LruCache<K, V> {
         LruCache {
             cache_map: LinkedHashMap::new(),
             max_capacity,
-            curr_capacity: 0,
+            size: 0,
         }
     }
 
@@ -33,9 +36,10 @@ impl<K: CacheKey, V: CacheValue> LruCache<K, V> {
     }
 
     fn put_value(&mut self, key: K, value: V) -> bool {
-        // If the file size is greater than the max capacity, return
         if value.size() > self.max_capacity {
-            // TODO(Yuanxin): Better log approach.
+            // If the object size is greater than the max capacity, we do not insert the
+            // object into the cache.
+            // TODO(Yuanxin): Better logging approach.
             println!("Warning: The size of the value is greater than the max capacity",);
             println!(
                 "Key: {:?}, Value: {:?}, Value size: {:?}, Max capacity: {:?}",
@@ -46,16 +50,16 @@ impl<K: CacheKey, V: CacheValue> LruCache<K, V> {
             );
             return false;
         }
-        // If the key already exists, update the file size
         if let Some(cache_value) = self.cache_map.get(&key) {
-            self.curr_capacity -= cache_value.size();
+            // If the key already exists, update the cache size.
+            self.size -= cache_value.size();
         }
-        self.curr_capacity += value.size();
+        self.size += value.size();
         self.cache_map.insert(key.clone(), value);
-        while self.curr_capacity > self.max_capacity {
+        while self.size > self.max_capacity {
             if let Some((key, cache_value)) = self.cache_map.pop_front() {
                 println!("-------- Evicting Key: {:?} --------", key);
-                self.curr_capacity -= cache_value.size();
+                self.size -= cache_value.size();
             }
         }
         true
@@ -88,10 +92,10 @@ impl ParpulseCache for LruCache<ParpulseCacheKey, ParpulseCacheValue> {
     }
 
     fn size(&self) -> usize {
-        self.curr_capacity
+        self.size
     }
 
-    fn get_max_capacity(&self) -> usize {
+    fn max_capacity(&self) -> usize {
         self.max_capacity
     }
 
@@ -101,7 +105,7 @@ impl ParpulseCache for LruCache<ParpulseCacheKey, ParpulseCacheValue> {
 
     fn clear(&mut self) {
         self.cache_map.clear();
-        self.curr_capacity = 0;
+        self.size = 0;
     }
 }
 
@@ -112,7 +116,7 @@ mod tests {
     #[test]
     fn test_new() {
         let cache = LruCache::<ParpulseCacheKey, ParpulseCacheValue>::new(10);
-        assert_eq!(cache.get_max_capacity(), 10);
+        assert_eq!(cache.max_capacity(), 10);
         assert_eq!(cache.size(), 0);
     }
 
