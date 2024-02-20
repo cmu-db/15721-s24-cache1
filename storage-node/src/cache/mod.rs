@@ -1,6 +1,20 @@
-use self::lru::LruCache;
-
 pub mod lru;
+use std::fmt::Debug;
+use std::hash::Hash;
+
+/// [`CacheKey`] is the key type for different caches in the system.
+pub trait CacheKey: Hash + Eq + Clone + Debug {}
+impl<T: Hash + Eq + Clone + Debug> CacheKey for T {}
+/// [`CacheValue`] is the value type for different caches in the system. It
+/// might represent a logical object and we can get the actual size for this
+/// logical object by calling `size()`.
+pub trait CacheValue {
+    type Value: Debug;
+
+    fn into_value(self) -> Self::Value;
+    fn as_value(&self) -> &Self::Value;
+    fn size(&self) -> usize;
+}
 
 /// [`ParpulseCacheKey`] is a path to the remote object store.
 pub type ParpulseCacheKey = String;
@@ -9,14 +23,45 @@ pub type ParpulseCacheKey = String;
 /// This is just a prototype and we might refine it later.
 pub type ParpulseCacheValue = (String, usize);
 
-/// [`ParpulseCache`] offers a unified interface for different cache algorithms.
-///
-/// Feel free to modify the methods.
-pub trait ParpulseCache {
-    // TODO: Consider making the cache lock-free so that we can have `&self`
-    // instead of `&mut self` here, which enables multiple calls to the cache at
-    // the same time.
-    fn get_value(&mut self, key: &ParpulseCacheKey) -> Option<ParpulseCacheValue>;
+impl CacheValue for ParpulseCacheValue {
+    type Value = String;
 
-    fn set_value(&mut self, key: ParpulseCacheKey, value: ParpulseCacheValue);
+    fn into_value(self) -> Self::Value {
+        self.0
+    }
+
+    fn as_value(&self) -> &Self::Value {
+        &self.0
+    }
+
+    fn size(&self) -> usize {
+        self.1
+    }
+}
+
+pub trait ParpulseCache {
+    /// Gets a value from the cache. Might has side effect on the cache (e.g.
+    /// modifying some bookkeeping fields in the cache).
+    fn get(&mut self, key: &ParpulseCacheKey) -> Option<&ParpulseCacheValue>;
+
+    /// Puts a value into the cache.
+    fn put(&mut self, key: ParpulseCacheKey, value: ParpulseCacheValue) -> bool;
+
+    /// Returns a reference to the value in the cache with no side effect on the
+    /// cache.
+    fn peek(&self, key: &ParpulseCacheKey) -> Option<&ParpulseCacheValue>;
+
+    /// Returns the number of the objects in the cache.
+    fn len(&self) -> usize;
+
+    /// Returns the total size of the objects in the cache.
+    fn size(&self) -> usize;
+
+    fn is_empty(&self) -> bool;
+
+    fn max_capacity(&self) -> usize;
+
+    fn set_max_capacity(&mut self, capacity: usize);
+
+    fn clear(&mut self);
 }
