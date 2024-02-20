@@ -7,7 +7,7 @@ use super::CacheKey;
 use super::CacheValue;
 use super::{ParpulseCache, ParpulseCacheKey, ParpulseCacheValue};
 
-/// [`LruCache`] adopts the least-recent-used algorithm to cache sized
+/// [`LruCache`] adopts the least-recently-used algorithm to cache sized
 /// objects. The cache will start evicting if a new object comes that makes
 /// the cache's size exceeds its max capacity, from the oldest to the newest.
 pub struct LruCache<K: CacheKey, V: CacheValue> {
