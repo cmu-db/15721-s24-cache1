@@ -23,11 +23,11 @@ pub type ParpulseCacheValue = (String, usize);
 impl CacheValue for ParpulseCacheValue {
     type Value = String;
 
-    fn into_value(self) -> String {
+    fn into_value(self) -> Self::Value {
         self.0
     }
 
-    fn as_value(&self) -> &String {
+    fn as_value(&self) -> &Self::Value {
         &self.0
     }
 
