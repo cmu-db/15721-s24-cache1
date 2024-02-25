@@ -3,9 +3,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::{
-    cache::{lru::LruCache, ParpulseCache},
-    server::RequestParams,
-    StorageResult,
+    cache::{lru::LruCache, ParpulseCache}, disk::disk_manager::DiskManager, server::RequestParams, StorageResult
 };
 
 /// [`StorageManager`] handles the request from the storage client.
@@ -17,12 +15,14 @@ pub struct StorageManager<C: ParpulseCache> {
     // TODO: Consider making the cache lock-free. See the comments for
     // `ParpulseCache`.
     cache: Arc<RwLock<C>>,
+    disk_manager: Arc<RwLock<DiskManager>>,
 }
 
 impl<C: ParpulseCache> StorageManager<C> {
-    pub fn new(cache: C) -> Self {
+    pub fn new(cache: C, disk_manager: DiskManager) -> Self {
         Self {
             cache: Arc::new(RwLock::new(cache)),
+            disk_manager: Arc::new(RwLock::new(disk_manager)),
         }
     }
 
