@@ -11,6 +11,7 @@ use crate::{
 /// [`DiskManager`] contains the common logic to read from or write to a disk.
 ///
 /// TODO: add some statistics member in DiskManager
+#[derive(Default)]
 pub struct DiskManager {}
 
 impl DiskManager {

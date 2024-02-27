@@ -1,9 +1,10 @@
 use std::{io, sync::Arc, time::Duration};
 
-use tokio::sync::RwLock;
+use anyhow::bail;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::{
-    cache::{lru::LruCache, ParpulseCache},
+    cache::{lru::LruCache, CacheValue, ParpulseCache},
     disk::disk_manager::DiskManager,
     server::RequestParams,
     storage_reader::{mock_s3::MockS3Reader, StorageReader, StorageReaderIterator},
@@ -17,94 +18,97 @@ use crate::{
 /// same time.
 
 pub struct StorageManager<C: ParpulseCache> {
-    // TODO: Consider making the cache lock-free. See the comments for
-    // `ParpulseCache`.
-    cache: Arc<RwLock<C>>,
-    // TODO: Consider making the disk manager lock-free.
-    // Currently the lock is to protect the statistics, please consider more decent strategy.
-    disk_manager: Arc<RwLock<DiskManager>>,
+    // TODO: Consider making the cache lock-free.
+    cache: RwLock<C>,
+    disk_manager: Mutex<DiskManager>,
     // TODO: cache_base_path should be from config
     // Cache_key = S3_PATH; Cache_value = (CACHE_BASE_PATH + S3_PATH, size)
-    pub cache_base_path: String,
+    cache_base_path: String,
 }
 
 impl<C: ParpulseCache> StorageManager<C> {
     pub fn new(cache: C, disk_manager: DiskManager, cache_base_path: String) -> Self {
         Self {
-            cache: Arc::new(RwLock::new(cache)),
-            disk_manager: Arc::new(RwLock::new(disk_manager)),
+            cache: RwLock::new(cache),
+            disk_manager: Mutex::new(disk_manager),
             cache_base_path,
         }
     }
 
-    pub async fn get_data(&self, _request: RequestParams) -> StorageResult<usize> {
+    pub async fn get_data(&self, request: RequestParams) -> StorageResult<usize> {
         // 1. Try to get data from the cache first.
         // 2. If cache miss, then go to storage reader to fetch the data from
         // the underlying storage.
         // 3. If needed, update the cache with the data fetched from the storage reader.
 
-        let key = match _request {
-            RequestParams::File(ref file_path) => file_path,
-            RequestParams::S3(ref s3_path) => s3_path,
-        };
+        // TODO: Support more request types.
+        let key = request.as_file().unwrap();
+        let mut cache = self.cache.write().await;
 
-        let mut cache_file_path: Option<String> = None;
-        let mut cache_size: Option<usize> = None;
+        match cache.get(key) {
+            Some(value) => {
+                // Directly get data from the cache.
+                let cache_value_size = value.size();
+                let cache_file_path = value.as_value();
 
-        {
-            // TODO(urgent): Cache read lock releases here, but disk read hasn't finished, what if this item is evicted now? Maybe we need `pin_count`, or keep the lock until the end of this method
-            let mut cache = self.cache.write().await;
-            if let Some(value) = cache.get(key) {
-                cache_file_path = Some(value.0.clone());
-                cache_size = Some(value.1);
-            }
-        }
-
-        if cache_file_path.is_none() {
-            let cache_value_path = format!("{}{}", &self.cache_base_path, key);
-
-            // TODO: 1. update buffer_size, maybe from config 2. use _request type to new reader, not directly new MockS3Reader
-            let reader = MockS3Reader::new(key.clone(), Some(Duration::from_secs(2)), 1024);
-
-            let mut disk_manager = self.disk_manager.write().await;
-            // TODO: assume that disk file path is the same as the key
-            cache_size = Some(
-                disk_manager.write_reader_to_disk_sync(reader.read_sync()?, &cache_value_path)?,
-            );
-
-            let mut cache = self.cache.write().await;
-            if !cache.put(key.clone(), (cache_value_path.clone(), cache_size.unwrap())) {
-                disk_manager.remove_file(&cache_value_path)?;
-                // FIXME: Is there a cache error from Datafusion? Should all of our errors belong to I/O error in Datafusion error? Or we need to define our own error
-                return Err(
-                    io::Error::new(io::ErrorKind::Other, "Failed to put into cache").into(),
-                );
-            }
-
-            cache_file_path = Some(cache_value_path);
-        }
-        // TODO(urgent): If we need calcuate the statistic for read, even if we only want to read disk_manager, we need to grab write lock since we want to modify statistics! (need refactor)
-        // TODO: update buffer_size, maybe from config
-        let mut output_iterator = self
-            .disk_manager
-            .read()
-            .await
-            .disk_read_sync_iterator(&cache_file_path.unwrap(), 1024)?;
-        let mut data_size: usize = 0;
-        loop {
-            match output_iterator.next() {
-                Some(Ok(bytes_read)) => {
-                    let buffer = output_iterator.buffer();
-                    // TODO: Put the data into network
-                    println!("Output {} bytes", bytes_read);
-                    data_size += bytes_read;
+                let mut output_iterator = self
+                    .disk_manager
+                    .lock()
+                    .await
+                    .disk_read_sync_iterator(cache_file_path, 1024)?;
+                let mut data_size: usize = 0;
+                loop {
+                    match output_iterator.next() {
+                        Some(Ok(bytes_read)) => {
+                            let buffer = output_iterator.buffer();
+                            // TODO: Put the data into network
+                            println!("Output {} bytes", bytes_read);
+                            data_size += bytes_read;
+                        }
+                        Some(Err(e)) => return Err(e),
+                        None => break,
+                    }
                 }
-                Some(Err(e)) => return Err(e),
-                None => break,
+
+                Ok(data_size)
+            }
+
+            None => {
+                // Get data from the underlying storage and put the data into the cache.
+                let cache_value_path = format!("{}{}", &self.cache_base_path, key);
+
+                // TODO:
+                // 1. Set buffer size from config
+                // 2. Support more types of storage.
+                let reader = MockS3Reader::new(key.clone(), Some(Duration::from_secs(2)), 1024);
+
+                // TODO:
+                // 1. Put the logics into `CacheManager`, which should handle the case where the write-out
+                // size exceeds the value size (value size > cache size).
+                // 2. We should call `iter.next()` outside `CacheManager` or `DiskManager` b/c we want to
+                // write the data to the response buffer at the same time.
+                let data_size = self
+                    .disk_manager
+                    .lock()
+                    .await
+                    .write_reader_to_disk_sync(reader.read_sync()?, &cache_value_path)?;
+                if !cache.put(key.clone(), (cache_value_path.clone(), data_size)) {
+                    self.disk_manager
+                        .lock()
+                        .await
+                        .remove_file(&cache_value_path)?;
+                    // TODO:
+                    // 1. Define our own error type.
+                    // 2. It's actually valid if the data cannot fit in the cache. We just write the data
+                    // into the response buffer.
+                    return Err(
+                        io::Error::new(io::ErrorKind::Other, "Failed to put into cache").into(),
+                    );
+                }
+
+                Ok(data_size)
             }
         }
-
-        Ok(data_size)
     }
 }
 
@@ -118,10 +122,10 @@ mod tests {
     async fn test_storage_manager() {
         let dummy_size = 1000000;
         let cache = LruCache::new(dummy_size);
-        let disk_manager = DiskManager {};
+        let disk_manager = DiskManager::default();
         let storage_manager = StorageManager::new(cache, disk_manager, "test/".to_string());
 
-        let request_path = "mock_parquet/House_price.parquet";
+        let request_path = "tests/parquet/house_price.parquet";
         let request = RequestParams::File(request_path.to_string());
 
         let mut start_time = Instant::now();
