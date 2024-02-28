@@ -106,6 +106,8 @@ impl<C: ParpulseCache> StorageManager<C> {
                     );
                 }
 
+                // TODO: Put the data into network
+
                 Ok(data_size)
             }
         }

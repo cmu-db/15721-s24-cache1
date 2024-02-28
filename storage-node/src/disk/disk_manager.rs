@@ -10,10 +10,11 @@ use crate::{
 
 /// [`DiskManager`] contains the common logic to read from or write to a disk.
 ///
-/// TODO: add some statistics member in DiskManager
+/// TODO: Record statistics (maybe in statistics manager).
 #[derive(Default)]
 pub struct DiskManager {}
 
+// TODO: Make each method accepting `&self` instead of `&mut self`.
 impl DiskManager {
     pub fn write_fd(&self, path: &str, append: bool) -> StorageResult<File> {
         let path_buf: PathBuf = PathBuf::from(path);
@@ -70,7 +71,6 @@ impl DiskManager {
         DiskReadSyncIterator::new(path, buffer_size)
     }
 
-    // FIXME: `mut` allows future statistics computation
     // FIXME: disk_path should not exist, otherwise throw an error
     pub fn write_reader_to_disk_sync<T>(
         &mut self,
