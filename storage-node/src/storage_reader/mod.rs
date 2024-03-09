@@ -7,7 +7,8 @@ pub mod mock_s3;
 pub mod s3;
 
 pub trait StorageReader {
-    fn read_sync(&self) -> StorageResult<impl StorageReaderIterator>;
+    type ReaderIterator: StorageReaderIterator;
+    fn read_sync(&self) -> StorageResult<Self::ReaderIterator>;
 }
 
 pub trait StorageReaderIterator {

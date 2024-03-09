@@ -29,8 +29,9 @@ impl MockS3Reader {
 }
 
 impl StorageReader for MockS3Reader {
+    type ReaderIterator = DiskReadSyncIterator;
     // FIXME: Where to put size? Do we need to also return `read_size` in this method?
-    fn read_sync(&self) -> StorageResult<impl StorageReaderIterator> {
+    fn read_sync(&self) -> StorageResult<Self::ReaderIterator> {
         if let Some(duration) = self.delay {
             thread::sleep(duration);
         }
