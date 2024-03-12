@@ -47,10 +47,10 @@ impl<K: CacheKey, V: CacheValue> LruKCache<K, V> {
         }
     }
 
-    fn evict(&mut self, new_key: &K) -> bool {
+    fn evict(&mut self, new_key: &K) -> Option<K> {
         let mut found = false;
-        let mut max_dist = 0;
-        let mut dist = 0;
+        let mut max_k_dist = 0;
+        let mut k_dist = 0;
         let mut earliest_timestamp = 0;
         let mut key_to_evict: Option<K> = None;
         for (key, node) in self.cache_map.iter() {
@@ -59,14 +59,16 @@ impl<K: CacheKey, V: CacheValue> LruKCache<K, V> {
             }
             let history = &node.history;
             if let Some(kth_timestamp) = history.front() {
-                if history.len() < self.k {
-                    dist = std::i32::MAX;
+                k_dist = if history.len() < self.k {
+                    std::i32::MAX
                 } else {
-                    dist = self.curr_timestamp - kth_timestamp;
-                }
-                if (dist > max_dist) || (dist == max_dist && *kth_timestamp < earliest_timestamp) {
+                    self.curr_timestamp - kth_timestamp
+                };
+                if (k_dist > max_k_dist)
+                    || (k_dist == max_k_dist && *kth_timestamp < earliest_timestamp)
+                {
                     found = true;
-                    max_dist = dist;
+                    max_k_dist = k_dist;
                     earliest_timestamp = *kth_timestamp;
                     key_to_evict = Some(key.clone());
                 }
@@ -78,25 +80,29 @@ impl<K: CacheKey, V: CacheValue> LruKCache<K, V> {
                 if let Some(node) = self.cache_map.remove(&key) {
                     self.size -= node.value.size();
                 }
+                return Some(key);
             }
-            return true;
         }
-        false
+        None
+    }
+
+    fn record_access(&mut self, node: &mut LruKNode<V>) {
+        node.history.push_back(self.curr_timestamp);
+        if node.history.len() > self.k {
+            node.history.pop_front();
+        }
+        self.curr_timestamp += 1;
     }
 
     fn get_value(&mut self, key: &K) -> Option<&V> {
-        if let Some(node) = self.cache_map.get_mut(key) {
-            // Record access
-            node.history.push_back(self.curr_timestamp);
-            if (node.history.len() as usize) > self.k {
-                node.history.pop_front();
+        if let Some(mut node) = self.cache_map.remove(key) {
+            self.record_access(&mut node);
+            self.cache_map.insert(key.clone(), node);
+            if let Some(cache_value) = self.cache_map.get(key).map(|node| &node.value) {
+                return Some(cache_value);
             }
-            self.curr_timestamp += 1;
-            let cache_value = &node.value;
-            Some(cache_value)
-        } else {
-            None
         }
+        None
     }
 
     fn put_value(&mut self, key: K, value: V) -> bool {
@@ -114,14 +120,10 @@ impl<K: CacheKey, V: CacheValue> LruKCache<K, V> {
             return false;
         }
         let updated_size = value.size();
-        if let Some(node) = self.cache_map.get_mut(&key) {
-            // If the key already exists, update the cache size.
+        if let Some(mut node) = self.cache_map.remove(&key) {
+            self.record_access(&mut node);
             self.size -= node.value.size();
-            // Record access
-            node.history.push_back(self.curr_timestamp);
-            if (node.history.len() as usize) > self.k {
-                node.history.pop_front();
-            }
+            self.cache_map.insert(key.clone(), node);
         } else {
             self.cache_map.insert(
                 key.clone(),
@@ -130,12 +132,13 @@ impl<K: CacheKey, V: CacheValue> LruKCache<K, V> {
                     history: vec![self.curr_timestamp].into(),
                 },
             );
+            self.curr_timestamp += 1;
         }
-        self.curr_timestamp += 1;
         self.size += updated_size;
         while self.size > self.max_capacity {
-            if !self.evict(&key) {
-                panic!("Failed to evict a key {:?}", key);
+            let key_to_evict = self.evict(&key);
+            if key_to_evict.is_none() {
+                panic!("Fail to evict key {:?}", key);
             }
         }
         true
