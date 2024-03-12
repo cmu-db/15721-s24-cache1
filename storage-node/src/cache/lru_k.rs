@@ -113,6 +113,7 @@ impl<K: CacheKey, V: CacheValue> LruKCache<K, V> {
             );
             return false;
         }
+        let updated_size = value.size();
         if let Some(node) = self.cache_map.get_mut(&key) {
             // If the key already exists, update the cache size.
             self.size -= node.value.size();
@@ -121,17 +122,17 @@ impl<K: CacheKey, V: CacheValue> LruKCache<K, V> {
             if (node.history.len() as usize) > self.k {
                 node.history.pop_front();
             }
-            self.curr_timestamp += 1;
+        } else {
+            self.cache_map.insert(
+                key.clone(),
+                LruKNode {
+                    value,
+                    history: vec![self.curr_timestamp].into(),
+                },
+            );
         }
-        self.size += value.size();
-        self.cache_map.insert(
-            key.clone(),
-            LruKNode {
-                value,
-                history: vec![self.curr_timestamp].into(),
-            },
-        );
         self.curr_timestamp += 1;
+        self.size += updated_size;
         while self.size > self.max_capacity {
             if !self.evict(&key) {
                 panic!("Failed to evict a key {:?}", key);
@@ -147,6 +148,10 @@ impl<K: CacheKey, V: CacheValue> LruKCache<K, V> {
         } else {
             None
         }
+    }
+
+    fn current_timestamp(&self) -> Timestamp {
+        self.curr_timestamp
     }
 }
 
@@ -234,10 +239,12 @@ mod tests {
         cache.put(key2.clone(), (value2.clone(), 2));
         cache.put(key3.clone(), (value3.clone(), 3));
         cache.put(key4.clone(), (value4.clone(), 4));
+        assert_eq!(cache.current_timestamp(), 4);
         assert_eq!(cache.get(&key3), Some(&(value3.clone(), 3)));
         assert_eq!(cache.get(&key4), Some(&(value4.clone(), 4)));
         assert_eq!(cache.get(&key1), Some(&(value1.clone(), 1)));
         assert_eq!(cache.get(&key2), Some(&(value2.clone(), 2)));
+        assert_eq!(cache.current_timestamp(), 8);
         // Now the kth (i.e. 2nd) order from old to new is [1, 2, 3, 4]
         cache.put(key5.clone(), (value5.clone(), 4));
         assert_eq!(cache.get(&key1), None); // key1 should be evicted
@@ -249,5 +256,6 @@ mod tests {
         // Now the kth (i.e. 2nd) order from old to new is [3, 4, 2, 5]
         cache.put(key1.clone(), (value1.clone(), 1));
         assert_eq!(cache.get(&key3), None); // key3 should be evicted
+        assert_eq!(cache.current_timestamp(), 14); // When get fails, the timestamp should not be updated
     }
 }
