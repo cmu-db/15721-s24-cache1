@@ -218,7 +218,7 @@ mod tests {
         let key = "key1".to_string();
         let value = "value1".to_string();
         assert_eq!(cache.peek(&key), None);
-        assert_eq!(cache.put(key.clone(), (value.clone(), 1)), true);
+        assert!(cache.put(key.clone(), (value.clone(), 1)));
         assert_eq!(cache.peek(&key), Some(&(value.clone(), 1)));
         assert_eq!(cache.len(), 1);
         assert_eq!(cache.size(), 1);
