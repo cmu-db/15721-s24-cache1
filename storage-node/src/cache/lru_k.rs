@@ -1,3 +1,5 @@
+/// LRU-K cache implementation.
+/// Credit: https://doi.org/10.1145/170036.170081
 use core::panic;
 use datafusion::execution::cache;
 use std::collections::HashMap;
