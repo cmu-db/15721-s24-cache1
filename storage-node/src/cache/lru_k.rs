@@ -195,9 +195,11 @@ mod tests {
 
     #[test]
     fn test_new() {
-        let cache = LruKCache::<ParpulseCacheKey, ParpulseCacheValue>::new(10, 2);
+        let mut cache = LruKCache::<ParpulseCacheKey, ParpulseCacheValue>::new(10, 2);
         assert_eq!(cache.max_capacity(), 10);
         assert_eq!(cache.size(), 0);
+        cache.set_max_capacity(20);
+        assert_eq!(cache.max_capacity(), 20);
     }
 
     #[test]
@@ -208,6 +210,11 @@ mod tests {
         assert_eq!(cache.peek(&key), None);
         assert_eq!(cache.put(key.clone(), (value.clone(), 1)), true);
         assert_eq!(cache.peek(&key), Some(&(value.clone(), 1)));
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.size(), 1);
+        assert!(!cache.is_empty());
+        cache.clear();
+        assert!(cache.is_empty());
     }
 
     #[test]
