@@ -14,16 +14,13 @@ use aws_sdk_s3::{
 use aws_smithy_runtime_api::{client::result::SdkError, http::Response};
 use bytes::{Buf, Bytes, BytesMut};
 use datafusion::error::DataFusionError;
-use futures::{
-    future::BoxFuture,
-    ready,
-    stream::{poll_fn, BoxStream},
-    Future, FutureExt, Stream,
-};
+use futures::{future::BoxFuture, ready, Future, FutureExt, Stream};
 
 use crate::error::{ParpulseError, ParpulseResult};
 
 use super::{AsyncStorageReader, StorageDataStream, StorageReaderIterator};
+
+const DEFAULT_CHUNK_SIZE: usize = 1024;
 
 pub struct S3Reader {
     client: Client,
@@ -52,27 +49,32 @@ pub struct S3ReaderIterator {
     bucket: String,
     keys: Vec<String>,
     current_key: usize,
-    buffer: Bytes,
+    buffer: BytesMut,
     chunk_size: usize,
 
     object_fut:
         Option<BoxFuture<'static, Result<GetObjectOutput, SdkError<GetObjectError, Response>>>>,
-    // data_fut: Option<BoxFuture<'static, Result<AggregatedBytes, ByteStreamError>>>,
+    data_fut: Option<BoxFuture<'static, Result<AggregatedBytes, ByteStreamError>>>,
 }
 
 impl S3ReaderIterator {
     pub fn new(client: Client, bucket: String, keys: Vec<String>, chunk_size: usize) -> Self {
         assert!(!keys.is_empty(), "keys should not be empty");
-        let fut = Box::pin(client.get_object().bucket(&bucket).key(&keys[0]).send());
+        let fut = client
+            .get_object()
+            .bucket(&bucket)
+            .key(&keys[0])
+            .send()
+            .boxed();
         Self {
             client,
             bucket,
             keys: keys.into(),
             current_key: 0,
-            buffer: Bytes::new(),
+            buffer: BytesMut::new(),
             chunk_size,
             object_fut: Some(fut),
-            // data_fut: None,
+            data_fut: None,
         }
     }
 }
@@ -82,54 +84,57 @@ impl Stream for S3ReaderIterator {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         if self.object_fut.is_some() {
-            println!("object_fut is some");
-            let mut object_fut = self.object_fut.take().unwrap();
-            println!("object_fut is taken");
-            loop {
-                match object_fut.poll_unpin(cx) {
-                    Poll::Ready(_) => {
-                        println!("object_fut is ready");
-                        break;
-                    }
-                    Poll::Pending => println!("object_fut is pending"),
-                }
-            }
-            println!("object_fut is polled");
+            let object_fut = self.object_fut.as_mut().unwrap();
             match ready!(object_fut.poll_unpin(cx)) {
                 Ok(object) => {
-                    println!("poll object is ok");
-                    let mut data_fut = object.body.collect().boxed();
-                    match ready!(data_fut.poll_unpin(cx)) {
-                        Ok(bytes) => {
-                            println!("poll data is ok");
-                            self.buffer = bytes.into_bytes();
-                            self.poll_next(cx)
-                        }
-                        Err(e) => Poll::Ready(Some(Err(ParpulseError::from(e)))),
-                    }
+                    self.object_fut.take();
+                    let fut = object.body.collect().boxed();
+                    self.data_fut = Some(fut);
+                    self.poll_next(cx)
+                }
+                Err(e) => Poll::Ready(Some(Err(ParpulseError::from(e)))),
+            }
+        } else if self.data_fut.is_some() {
+            let data_fut = self.data_fut.as_mut().unwrap();
+            match ready!(data_fut.poll_unpin(cx)) {
+                Ok(bytes) => {
+                    self.data_fut.take();
+                    self.buffer.extend(bytes.into_bytes());
+                    self.poll_next(cx)
                 }
                 Err(e) => Poll::Ready(Some(Err(ParpulseError::from(e)))),
             }
         } else {
-            if self.buffer.remaining() == 0 {
-                self.current_key += 1;
-                if self.current_key >= self.keys.len() {
-                    Poll::Ready(None)
+            if self.buffer.remaining() >= self.chunk_size {
+                // There are sufficient data in the buffer. Return the data directly.
+                let chunk_size = self.chunk_size;
+                let bytes = self.buffer.copy_to_bytes(chunk_size);
+                Poll::Ready(Some(Ok(bytes)))
+            } else {
+                // The size of the remaining data is less than the chunk size.
+                if self.current_key + 1 >= self.keys.len() {
+                    if self.buffer.is_empty() {
+                        // No more data. Return None.
+                        Poll::Ready(None)
+                    } else {
+                        // No more data in S3. Just return the remaining data.
+                        let remaining_len = self.buffer.len();
+                        let remaining_data = self.buffer.copy_to_bytes(remaining_len);
+                        Poll::Ready(Some(Ok(remaining_data)))
+                    }
                 } else {
+                    // There are more data in S3. Fetch the next object.
+                    self.current_key += 1;
                     let fut = self
                         .client
                         .get_object()
                         .bucket(&self.bucket)
                         .key(&self.keys[self.current_key])
-                        .send();
-                    self.object_fut = Some(fut.boxed());
+                        .send()
+                        .boxed();
+                    self.object_fut = Some(fut);
                     self.poll_next(cx)
                 }
-            } else {
-                // Read the bytes in the buffer by `chunk_size`.
-                let read_byte_count = std::cmp::min(self.chunk_size, self.buffer.remaining());
-                let bytes = self.buffer.copy_to_bytes(read_byte_count);
-                Poll::Ready(Some(Ok(bytes)))
             }
         }
     }
@@ -166,27 +171,17 @@ impl AsyncStorageReader for S3Reader {
             self.client.clone(),
             self.bucket.clone(),
             self.keys.clone(),
-            1024, // TODO: Set buffer size from config
+            DEFAULT_CHUNK_SIZE, // TODO: Set buffer size from config
         );
         Ok(Box::pin(iterator))
     }
 }
 
-// fn poll_obj_fut(client: Client, cx: &mut Context<'_>) -> Poll<String> {
-//     let bucket = "parpulse-test".to_string();
-//     let keys = vec![
-//         "userdata/userdata1.parquet".to_string(),
-//         // "userdata/userdata2.parquet".to_string(),
-//         // "userdata/userdata3.parquet".to_string(),
-//         // "userdata/userdata4.parquet".to_string(),
-//         // "userdata/userdata5.parquet".to_string(),
-//     ];
-
-//     client.get_object().bucket(&bucket).key(&keys[0]).send()
-// }
-
+#[cfg(test)]
 mod tests {
-    use futures::StreamExt;
+    use std::pin::pin;
+
+    use futures::{future::poll_fn, StreamExt};
 
     use super::*;
 
@@ -200,15 +195,16 @@ mod tests {
         assert_eq!(bytes.len(), 113629);
     }
 
+    // #[ignore = "environment variables required"]
     #[tokio::test]
     async fn test_s3_read_streaming() {
         let bucket = "parpulse-test".to_string();
         let keys = vec![
             "userdata/userdata1.parquet".to_string(),
-            // "userdata/userdata2.parquet".to_string(),
-            // "userdata/userdata3.parquet".to_string(),
-            // "userdata/userdata4.parquet".to_string(),
-            // "userdata/userdata5.parquet".to_string(),
+            "userdata/userdata2.parquet".to_string(),
+            "userdata/userdata3.parquet".to_string(),
+            "userdata/userdata4.parquet".to_string(),
+            "userdata/userdata5.parquet".to_string(),
         ];
 
         let region_provider = RegionProviderChain::default_provider().or_else("us-east-1");
@@ -217,24 +213,17 @@ mod tests {
             .load()
             .await;
         let client = Client::new(&config);
-        client
-            .get_object()
-            .bucket(&bucket)
-            .key(&keys[0])
-            .send()
-            .await
-            .unwrap();
-        println!("got object from s3 client!");
+        let reader = S3Reader::new(bucket, keys).await;
+        let mut iterator = reader.streaming_read().await.unwrap();
 
-        let mut reader = S3Reader::new(bucket, keys).await;
-        let mut data_stream = reader.streaming_read().await.unwrap();
-        let mut read_count = 0;
-        println!("{}", 111);
-        while let Some(data) = data_stream.next().await {
-            assert_eq!(data.unwrap().len(), 1024);
-            println!("get {} bytes data", read_count);
-            read_count += 1;
+        let mut streaming_read_count = 0;
+        let mut streaming_total_bytes = 0;
+        while let Some(data) = iterator.next().await {
+            let data = data.unwrap();
+            streaming_read_count += 1;
+            streaming_total_bytes += data.len();
         }
-        println!("read_count: {}", read_count);
+        assert_eq!(streaming_total_bytes, 565545);
+        assert_eq!(streaming_read_count, 553);
     }
 }
