@@ -195,7 +195,7 @@ mod tests {
         assert_eq!(bytes.len(), 113629);
     }
 
-    // #[ignore = "environment variables required"]
+    #[ignore = "environment variables required"]
     #[tokio::test]
     async fn test_s3_read_streaming() {
         let bucket = "parpulse-test".to_string();
