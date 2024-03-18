@@ -69,7 +69,7 @@ impl S3ReaderIterator {
         Self {
             client,
             bucket,
-            keys: keys.into(),
+            keys,
             current_key: 0,
             buffer: BytesMut::new(),
             chunk_size,
@@ -104,37 +104,35 @@ impl Stream for S3ReaderIterator {
                 }
                 Err(e) => Poll::Ready(Some(Err(ParpulseError::from(e)))),
             }
+        } else if self.buffer.remaining() >= self.chunk_size {
+            // There are sufficient data in the buffer. Return the data directly.
+            let chunk_size = self.chunk_size;
+            let bytes = self.buffer.copy_to_bytes(chunk_size);
+            Poll::Ready(Some(Ok(bytes)))
         } else {
-            if self.buffer.remaining() >= self.chunk_size {
-                // There are sufficient data in the buffer. Return the data directly.
-                let chunk_size = self.chunk_size;
-                let bytes = self.buffer.copy_to_bytes(chunk_size);
-                Poll::Ready(Some(Ok(bytes)))
-            } else {
-                // The size of the remaining data is less than the chunk size.
-                if self.current_key + 1 >= self.keys.len() {
-                    if self.buffer.is_empty() {
-                        // No more data. Return None.
-                        Poll::Ready(None)
-                    } else {
-                        // No more data in S3. Just return the remaining data.
-                        let remaining_len = self.buffer.len();
-                        let remaining_data = self.buffer.copy_to_bytes(remaining_len);
-                        Poll::Ready(Some(Ok(remaining_data)))
-                    }
+            // The size of the remaining data is less than the chunk size.
+            if self.current_key + 1 >= self.keys.len() {
+                if self.buffer.is_empty() {
+                    // No more data. Return None.
+                    Poll::Ready(None)
                 } else {
-                    // There are more data in S3. Fetch the next object.
-                    self.current_key += 1;
-                    let fut = self
-                        .client
-                        .get_object()
-                        .bucket(&self.bucket)
-                        .key(&self.keys[self.current_key])
-                        .send()
-                        .boxed();
-                    self.object_fut = Some(fut);
-                    self.poll_next(cx)
+                    // No more data in S3. Just return the remaining data.
+                    let remaining_len = self.buffer.len();
+                    let remaining_data = self.buffer.copy_to_bytes(remaining_len);
+                    Poll::Ready(Some(Ok(remaining_data)))
                 }
+            } else {
+                // There are more data in S3. Fetch the next object.
+                self.current_key += 1;
+                let fut = self
+                    .client
+                    .get_object()
+                    .bucket(&self.bucket)
+                    .key(&self.keys[self.current_key])
+                    .send()
+                    .boxed();
+                self.object_fut = Some(fut);
+                self.poll_next(cx)
             }
         }
     }
