@@ -2,10 +2,10 @@ use std::{env, io, thread, time::Duration};
 
 use crate::{
     disk::disk_manager::{DiskManager, DiskReadSyncIterator},
-    StorageResult,
+    error::ParpulseResult,
 };
 
-use super::{StorageReader, StorageReaderIterator};
+use super::{StorageDataStream, StorageReader, StorageReaderIterator};
 
 pub struct MockS3Reader {
     file_path: String,
@@ -22,16 +22,12 @@ impl MockS3Reader {
             buffer_size,
         }
     }
-
-    pub async fn read(&self) -> StorageResult<()> {
-        todo!()
-    }
 }
 
 impl StorageReader for MockS3Reader {
     type ReaderIterator = DiskReadSyncIterator;
     // FIXME: Where to put size? Do we need to also return `read_size` in this method?
-    fn read_sync(&self) -> StorageResult<Self::ReaderIterator> {
+    fn read(&self) -> ParpulseResult<Self::ReaderIterator> {
         if let Some(duration) = self.delay {
             thread::sleep(duration);
         }

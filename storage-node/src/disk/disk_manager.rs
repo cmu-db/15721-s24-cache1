@@ -3,10 +3,8 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
-use crate::{
-    storage_reader::{StorageReader, StorageReaderIterator},
-    StorageResult,
-};
+use crate::error::ParpulseResult;
+use crate::storage_reader::{StorageReader, StorageReaderIterator};
 
 /// [`DiskManager`] contains the common logic to read from or write to a disk.
 ///
@@ -16,7 +14,7 @@ pub struct DiskManager {}
 
 // TODO: Make each method accepting `&self` instead of `&mut self`.
 impl DiskManager {
-    pub fn write_fd(&self, path: &str, append: bool) -> StorageResult<File> {
+    pub fn write_fd(&self, path: &str, append: bool) -> ParpulseResult<File> {
         let path_buf: PathBuf = PathBuf::from(path);
         if let Some(parent) = path_buf.parent() {
             if !parent.exists() {
@@ -34,13 +32,13 @@ impl DiskManager {
 
     // FIXME: `mut` allows future statistics computation
     // TODO: only practical when you want to write data all at once
-    pub fn write_disk_sync_all(&mut self, path: &str, content: &[u8]) -> StorageResult<()> {
+    pub fn write_disk_sync_all(&mut self, path: &str, content: &[u8]) -> ParpulseResult<()> {
         let mut file = self.write_fd(path, false)?;
         Ok(file.write_all(content)?)
     }
 
     // FIXME: do we need to record statistics for read?
-    pub fn read_disk_sync_all(&self, path: &str) -> StorageResult<(usize, Bytes)> {
+    pub fn read_disk_sync_all(&self, path: &str) -> ParpulseResult<(usize, Bytes)> {
         let mut file = File::open(path)?;
         let mut buffer = Vec::new();
         let bytes_read = file.read_to_end(&mut buffer)?;
@@ -52,7 +50,7 @@ impl DiskManager {
         path: &str,
         start_pos: u64,
         bytes_to_read: usize,
-    ) -> StorageResult<(usize, Bytes)> {
+    ) -> ParpulseResult<(usize, Bytes)> {
         let mut file = File::open(path)?;
         file.seek(io::SeekFrom::Start(start_pos))?;
 
@@ -67,7 +65,7 @@ impl DiskManager {
         &self,
         path: &str,
         buffer_size: usize,
-    ) -> StorageResult<DiskReadSyncIterator> {
+    ) -> ParpulseResult<DiskReadSyncIterator> {
         DiskReadSyncIterator::new(path, buffer_size)
     }
 
@@ -76,7 +74,7 @@ impl DiskManager {
         &mut self,
         mut iterator: T,
         disk_path: &str,
-    ) -> StorageResult<usize>
+    ) -> ParpulseResult<usize>
     where
         T: StorageReaderIterator,
     {
@@ -103,12 +101,12 @@ impl DiskManager {
         Ok(bytes_written)
     }
 
-    pub fn file_size(&self, path: &str) -> StorageResult<u64> {
+    pub fn file_size(&self, path: &str) -> ParpulseResult<u64> {
         let metadata = fs::metadata(path)?;
         Ok(metadata.len())
     }
 
-    pub fn remove_file(&mut self, path: &str) -> StorageResult<()> {
+    pub fn remove_file(&mut self, path: &str) -> ParpulseResult<()> {
         Ok(fs::remove_file(path)?)
     }
 }
@@ -120,7 +118,7 @@ pub struct DiskReadSyncIterator {
 }
 
 impl DiskReadSyncIterator {
-    pub fn new(file_path: &str, buffer_size: usize) -> StorageResult<Self> {
+    pub fn new(file_path: &str, buffer_size: usize) -> ParpulseResult<Self> {
         let file = File::open(file_path)?;
 
         Ok(DiskReadSyncIterator {
@@ -131,7 +129,7 @@ impl DiskReadSyncIterator {
 }
 
 impl StorageReaderIterator for DiskReadSyncIterator {
-    fn next(&mut self) -> Option<StorageResult<usize>> {
+    fn next(&mut self) -> Option<ParpulseResult<usize>> {
         match self.f.read(self.buffer.as_mut()) {
             Ok(bytes_read) => {
                 if bytes_read > 0 {
@@ -140,7 +138,7 @@ impl StorageReaderIterator for DiskReadSyncIterator {
                     None
                 }
             }
-            Err(e) => Some(Err(datafusion::error::DataFusionError::IoError(e))),
+            Err(e) => Some(Err(e.into())),
         }
     }
 

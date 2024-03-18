@@ -1,8 +1,8 @@
 use enum_as_inner::EnumAsInner;
 
 use crate::{
-    cache::lru::LruCache, disk::disk_manager::DiskManager, storage_manager::StorageManager,
-    StorageResult,
+    cache::lru::LruCache, disk::disk_manager::DiskManager, error::ParpulseResult,
+    storage_manager::StorageManager,
 };
 
 // FIXME: Discuss with catalog team for more information.
@@ -12,7 +12,7 @@ pub enum RequestParams {
     S3(String),
 }
 
-pub async fn storage_node_serve() -> StorageResult<()> {
+pub async fn storage_node_serve() -> ParpulseResult<()> {
     // TODO: Read the type of the cache from config.
     let dummy_size = 10;
     let cache = LruCache::new(dummy_size);
