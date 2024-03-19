@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use futures::{stream::BoxStream, Stream};
 
@@ -20,6 +21,7 @@ pub trait StorageReaderIterator {
 pub type StorageDataStream = BoxStream<'static, ParpulseResult<Bytes>>;
 
 // TODO: Merge `StorageReader` and `AsyncStorageReader`.
+#[async_trait]
 pub trait AsyncStorageReader {
     async fn read(&self) -> ParpulseResult<Bytes>;
     async fn streaming_read(&self) -> ParpulseResult<StorageDataStream>;

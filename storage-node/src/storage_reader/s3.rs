@@ -5,6 +5,7 @@ use std::{
     task::{Context, Poll},
 };
 
+use async_trait::async_trait;
 use aws_config::{meta::region::RegionProviderChain, BehaviorVersion};
 use aws_sdk_s3::{
     operation::get_object::{GetObjectError, GetObjectOutput},
@@ -83,8 +84,7 @@ impl Stream for S3ReaderIterator {
     type Item = ParpulseResult<Bytes>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        if self.object_fut.is_some() {
-            let object_fut = self.object_fut.as_mut().unwrap();
+        if let Some(object_fut) = self.object_fut.as_mut() {
             match ready!(object_fut.poll_unpin(cx)) {
                 Ok(object) => {
                     self.object_fut.take();
@@ -94,8 +94,7 @@ impl Stream for S3ReaderIterator {
                 }
                 Err(e) => Poll::Ready(Some(Err(ParpulseError::from(e)))),
             }
-        } else if self.data_fut.is_some() {
-            let data_fut = self.data_fut.as_mut().unwrap();
+        } else if let Some(data_fut) = self.data_fut.as_mut() {
             match ready!(data_fut.poll_unpin(cx)) {
                 Ok(bytes) => {
                     self.data_fut.take();
@@ -138,6 +137,7 @@ impl Stream for S3ReaderIterator {
     }
 }
 
+#[async_trait]
 impl AsyncStorageReader for S3Reader {
     /// NEVER call this method if you do not know the size of the data -- collecting
     /// all data into one buffer might lead to OOM.
@@ -205,12 +205,6 @@ mod tests {
             "userdata/userdata5.parquet".to_string(),
         ];
 
-        let region_provider = RegionProviderChain::default_provider().or_else("us-east-1");
-        let config = aws_config::defaults(BehaviorVersion::latest())
-            .region(region_provider)
-            .load()
-            .await;
-        let client = Client::new(&config);
         let reader = S3Reader::new(bucket, keys).await;
         let mut iterator = reader.streaming_read().await.unwrap();
 
