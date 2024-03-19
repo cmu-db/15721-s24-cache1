@@ -1,4 +1,5 @@
 pub mod lru;
+pub mod lru_k;
 use std::fmt::Debug;
 use std::hash::Hash;
 

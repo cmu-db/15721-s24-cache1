@@ -1,7 +1,5 @@
 use hashlink::linked_hash_map;
 use hashlink::LinkedHashMap;
-use std::borrow::Borrow;
-use std::hash::Hash;
 
 use super::CacheKey;
 use super::CacheValue;
