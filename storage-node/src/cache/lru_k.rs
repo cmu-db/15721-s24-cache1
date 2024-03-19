@@ -1,6 +1,5 @@
 /// LRU-K cache implementation.
 /// Credit: https://doi.org/10.1145/170036.170081
-use core::panic;
 use datafusion::execution::cache;
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -67,7 +66,7 @@ impl<K: CacheKey, V: CacheValue> LruKCache<K, V> {
                     self.curr_timestamp - kth_timestamp
                 };
                 if (k_dist > max_k_dist)
-                    || (k_dist == max_k_dist && *kth_timestamp < earliest_timestamp)
+                    || (k_dist == max_k_dist && kth_timestamp < &earliest_timestamp)
                 {
                     found = true;
                     max_k_dist = k_dist;
@@ -100,9 +99,7 @@ impl<K: CacheKey, V: CacheValue> LruKCache<K, V> {
         if let Some(mut node) = self.cache_map.remove(key) {
             self.record_access(&mut node);
             self.cache_map.insert(key.clone(), node);
-            if let Some(cache_value) = self.cache_map.get(key).map(|node| &node.value) {
-                return Some(cache_value);
-            }
+            return self.cache_map.get(key).map(|node| &node.value);
         }
         None
     }
@@ -139,9 +136,11 @@ impl<K: CacheKey, V: CacheValue> LruKCache<K, V> {
         self.size += updated_size;
         while self.size > self.max_capacity {
             let key_to_evict = self.evict(&key);
-            if key_to_evict.is_none() {
-                panic!("Fail to evict key {:?}", key);
-            }
+            debug_assert!(
+                key_to_evict.is_some(),
+                "key {:?} should have been evicted when cache size is greater than max capacity",
+                key
+            );
         }
         true
     }
@@ -262,5 +261,27 @@ mod tests {
         cache.put(key1.clone(), (value1.clone(), 1));
         assert_eq!(cache.get(&key3), None); // key3 should be evicted
         assert_eq!(cache.current_timestamp(), 14); // When get fails, the timestamp should not be updated
+    }
+
+    #[test]
+    fn test_infinite() {
+        let mut cache = LruKCache::<ParpulseCacheKey, ParpulseCacheValue>::new(6, 2);
+        let key1 = "key1".to_string();
+        let key2 = "key2".to_string();
+        let key3 = "key3".to_string();
+        let key4 = "key4".to_string();
+        let value1 = "value1".to_string();
+        let value2 = "value2".to_string();
+        let value3 = "value3".to_string();
+        let value4 = "value4".to_string();
+        cache.put(key1.clone(), (value1.clone(), 1));
+        cache.put(key2.clone(), (value2.clone(), 2));
+        cache.put(key3.clone(), (value3.clone(), 3));
+        cache.put(key4.clone(), (value4.clone(), 4));
+        assert_eq!(cache.current_timestamp(), 4);
+        assert_eq!(cache.get(&key1), None); // Key1 should be evicted as it has infinite k distance and the earliest overall timestamp, same for key2 and key3
+        assert_eq!(cache.get(&key2), None);
+        assert_eq!(cache.get(&key3), None);
+        assert_eq!(cache.size(), 4); // Only key4 should be in the cache
     }
 }
