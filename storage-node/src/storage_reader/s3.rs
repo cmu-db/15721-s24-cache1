@@ -23,6 +23,8 @@ use super::{AsyncStorageReader, StorageDataStream, StorageReaderIterator};
 
 const DEFAULT_CHUNK_SIZE: usize = 1024;
 
+/// [`S3Reader`] is a reader for retrieving data from S3. It can either read the
+/// data once at all or read the data in an asynchronous stream.
 pub struct S3Reader {
     client: Client,
     bucket: String,
@@ -45,6 +47,8 @@ impl S3Reader {
     }
 }
 
+/// [`S3DataStream`] is a stream for reading data from S3. It reads the data in
+/// chunks and returns the data in a stream.
 pub struct S3DataStream {
     client: Client,
     bucket: String,
@@ -104,7 +108,7 @@ impl Stream for S3DataStream {
                 Err(e) => Poll::Ready(Some(Err(ParpulseError::from(e)))),
             }
         } else if self.buffer.remaining() >= self.chunk_size {
-            // There are sufficient data in the buffer. Return the data directly.
+            // There are enough data to consume in the buffer. Return the data directly.
             let chunk_size = self.chunk_size;
             let bytes = self.buffer.copy_to_bytes(chunk_size);
             Poll::Ready(Some(Ok(bytes)))

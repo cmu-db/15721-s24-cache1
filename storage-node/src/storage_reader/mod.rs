@@ -20,9 +20,15 @@ pub trait StorageReaderIterator {
 
 pub type StorageDataStream = BoxStream<'static, ParpulseResult<Bytes>>;
 
-// TODO: Merge `StorageReader` and `AsyncStorageReader`.
+// TODO: Merge `StorageReader` with `AsyncStorageReader`.
 #[async_trait]
 pub trait AsyncStorageReader {
+    /// Read all data at once from the underlying storage.
+    ///
+    /// NEVER call this method if you do not know the size of the data -- collecting
+    /// all data into one buffer might lead to OOM.
     async fn read_all(&self) -> ParpulseResult<Bytes>;
+
+    /// Read data from the underlying storage as a stream.
     async fn into_stream(self) -> ParpulseResult<StorageDataStream>;
 }
