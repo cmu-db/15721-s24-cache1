@@ -6,9 +6,9 @@ use tokio::sync::{Mutex, RwLock};
 use crate::{
     cache::{lru::LruCache, CacheValue, ParpulseCache},
     disk::disk_manager::DiskManager,
+    error::ParpulseResult,
     server::RequestParams,
     storage_reader::{mock_s3::MockS3Reader, StorageReader, StorageReaderIterator},
-    StorageResult,
 };
 
 /// [`StorageManager`] handles the request from the storage client.
@@ -35,7 +35,7 @@ impl<C: ParpulseCache> StorageManager<C> {
         }
     }
 
-    pub async fn get_data(&self, request: RequestParams) -> StorageResult<usize> {
+    pub async fn get_data(&self, request: RequestParams) -> ParpulseResult<usize> {
         // 1. Try to get data from the cache first.
         // 2. If cache miss, then go to storage reader to fetch the data from
         // the underlying storage.
@@ -91,7 +91,7 @@ impl<C: ParpulseCache> StorageManager<C> {
                     .disk_manager
                     .lock()
                     .await
-                    .write_reader_to_disk_sync(reader.read_sync()?, &cache_value_path)?;
+                    .write_reader_to_disk_sync(reader.read()?, &cache_value_path)?;
                 if !cache.put(key.clone(), (cache_value_path.clone(), data_size)) {
                     self.disk_manager
                         .lock()
