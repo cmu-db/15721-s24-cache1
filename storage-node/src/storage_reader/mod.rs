@@ -23,6 +23,6 @@ pub type StorageDataStream = BoxStream<'static, ParpulseResult<Bytes>>;
 // TODO: Merge `StorageReader` and `AsyncStorageReader`.
 #[async_trait]
 pub trait AsyncStorageReader {
-    async fn read(&self) -> ParpulseResult<Bytes>;
-    async fn streaming_read(&self) -> ParpulseResult<StorageDataStream>;
+    async fn read_all(&self) -> ParpulseResult<Bytes>;
+    async fn into_stream(self) -> ParpulseResult<StorageDataStream>;
 }

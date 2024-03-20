@@ -45,7 +45,7 @@ impl S3Reader {
     }
 }
 
-pub struct S3ReaderIterator {
+pub struct S3DataStream {
     client: Client,
     bucket: String,
     keys: Vec<String>,
@@ -58,7 +58,7 @@ pub struct S3ReaderIterator {
     data_fut: Option<BoxFuture<'static, Result<AggregatedBytes, ByteStreamError>>>,
 }
 
-impl S3ReaderIterator {
+impl S3DataStream {
     pub fn new(client: Client, bucket: String, keys: Vec<String>, chunk_size: usize) -> Self {
         assert!(!keys.is_empty(), "keys should not be empty");
         let fut = client
@@ -80,7 +80,7 @@ impl S3ReaderIterator {
     }
 }
 
-impl Stream for S3ReaderIterator {
+impl Stream for S3DataStream {
     type Item = ParpulseResult<Bytes>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
@@ -141,7 +141,7 @@ impl Stream for S3ReaderIterator {
 impl AsyncStorageReader for S3Reader {
     /// NEVER call this method if you do not know the size of the data -- collecting
     /// all data into one buffer might lead to OOM.
-    async fn read(&self) -> ParpulseResult<Bytes> {
+    async fn read_all(&self) -> ParpulseResult<Bytes> {
         let mut bytes = BytesMut::new();
         for key in &self.keys {
             let object = self
@@ -164,14 +164,14 @@ impl AsyncStorageReader for S3Reader {
         Ok(bytes.freeze())
     }
 
-    async fn streaming_read(&self) -> ParpulseResult<StorageDataStream> {
-        let iterator = S3ReaderIterator::new(
-            self.client.clone(),
-            self.bucket.clone(),
-            self.keys.clone(),
+    async fn into_stream(self) -> ParpulseResult<StorageDataStream> {
+        let s3_stream = S3DataStream::new(
+            self.client,
+            self.bucket,
+            self.keys,
             DEFAULT_CHUNK_SIZE, // TODO: Set buffer size from config
         );
-        Ok(Box::pin(iterator))
+        Ok(Box::pin(s3_stream))
     }
 }
 
@@ -189,7 +189,7 @@ mod tests {
         let bucket = "parpulse-test".to_string();
         let keys = vec!["userdata/userdata1.parquet".to_string()];
         let mut reader = S3Reader::new(bucket, keys).await;
-        let bytes = reader.read().await.unwrap();
+        let bytes = reader.read_all().await.unwrap();
         assert_eq!(bytes.len(), 113629);
     }
 
@@ -206,11 +206,11 @@ mod tests {
         ];
 
         let reader = S3Reader::new(bucket, keys).await;
-        let mut iterator = reader.streaming_read().await.unwrap();
+        let mut s3_stream = reader.into_stream().await.unwrap();
 
         let mut streaming_read_count = 0;
         let mut streaming_total_bytes = 0;
-        while let Some(data) = iterator.next().await {
+        while let Some(data) = s3_stream.next().await {
             let data = data.unwrap();
             streaming_read_count += 1;
             streaming_total_bytes += data.len();
