@@ -1,21 +1,18 @@
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
+use datafusion::physical_plan::streaming::PartitionStream;
 use futures::{stream::BoxStream, Stream};
 
-use crate::error::ParpulseResult;
+use crate::{cache::ParpulseCache, error::ParpulseResult, storage_manager::ParpulseReaderIterator};
 
 pub mod local_fs;
 pub mod mock_s3;
 pub mod s3;
 
-pub trait StorageReader {
-    type ReaderIterator: StorageReaderIterator;
-    fn read(&self) -> ParpulseResult<Self::ReaderIterator>;
-}
-
-pub trait StorageReaderIterator {
-    fn next(&mut self) -> Option<ParpulseResult<usize>>;
-    fn buffer(&self) -> &BytesMut;
+pub trait SyncStorageReader {
+    type ReaderIterator: ParpulseReaderIterator;
+    fn read_all(&self) -> ParpulseResult<Bytes>;
+    fn into_iterator(&self) -> ParpulseResult<Self::ReaderIterator>;
 }
 
 pub type StorageDataStream = BoxStream<'static, ParpulseResult<Bytes>>;

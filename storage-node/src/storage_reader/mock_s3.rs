@@ -1,11 +1,13 @@
 use std::{env, io, thread, time::Duration};
 
+use bytes::Bytes;
+
 use crate::{
     disk::disk_manager::{DiskManager, DiskReadSyncIterator},
     error::ParpulseResult,
 };
 
-use super::{StorageDataStream, StorageReader, StorageReaderIterator};
+use super::{StorageDataStream, SyncStorageReader};
 
 pub struct MockS3Reader {
     file_path: String,
@@ -24,10 +26,18 @@ impl MockS3Reader {
     }
 }
 
-impl StorageReader for MockS3Reader {
+impl SyncStorageReader for MockS3Reader {
     type ReaderIterator = DiskReadSyncIterator;
+    fn read_all(&self) -> ParpulseResult<Bytes> {
+        // TODO: Definitely need to refactor (A real DiskManager held R&W lock, actual disk functions should be able directly call like disk_manager::xxx)
+        // better to seperate manager & helper functions, mock s3 only need to call helper functions
+        let mut disk_manager = DiskManager {};
+        let (bytes_read, bytes) = disk_manager.read_disk_sync_all(&self.file_path)?;
+        Ok(bytes)
+    }
+
     // FIXME: Where to put size? Do we need to also return `read_size` in this method?
-    fn read(&self) -> ParpulseResult<Self::ReaderIterator> {
+    fn into_iterator(&self) -> ParpulseResult<Self::ReaderIterator> {
         if let Some(duration) = self.delay {
             thread::sleep(duration);
         }

@@ -19,7 +19,7 @@ use futures::{future::BoxFuture, ready, Future, FutureExt, Stream};
 
 use crate::error::{ParpulseError, ParpulseResult};
 
-use super::{AsyncStorageReader, StorageDataStream, StorageReaderIterator};
+use super::{AsyncStorageReader, StorageDataStream};
 
 const DEFAULT_CHUNK_SIZE: usize = 1024;
 

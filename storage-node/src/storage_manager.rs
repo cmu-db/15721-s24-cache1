@@ -1,6 +1,8 @@
 use std::{io, sync::Arc, time::Duration};
 
 use anyhow::bail;
+use bytes::BytesMut;
+use futures::Stream;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::{
@@ -8,7 +10,7 @@ use crate::{
     disk::disk_manager::DiskManager,
     error::ParpulseResult,
     server::RequestParams,
-    storage_reader::{mock_s3::MockS3Reader, StorageReader, StorageReaderIterator},
+    storage_reader::{mock_s3::MockS3Reader, SyncStorageReader},
 };
 
 /// [`StorageManager`] handles the request from the storage client.
@@ -91,7 +93,7 @@ impl<C: ParpulseCache> StorageManager<C> {
                     .disk_manager
                     .lock()
                     .await
-                    .write_reader_to_disk_sync(reader.read()?, &cache_value_path)?;
+                    .write_reader_to_disk_sync(reader.into_iterator()?, &cache_value_path)?;
                 if !cache.put(key.clone(), (cache_value_path.clone(), data_size)) {
                     self.disk_manager
                         .lock()
@@ -112,6 +114,13 @@ impl<C: ParpulseCache> StorageManager<C> {
             }
         }
     }
+}
+
+// This iterator will utilize same buffer to read all the data, please only use it when sync.
+// The major difference with ParpulseReaderIterator and Stream is the return type &BytesMut vs Bytes
+// &BytesMut has no data copy, Bytes allows multiple async read at the same time
+pub trait ParpulseReaderIterator: Iterator<Item = ParpulseResult<usize>> {
+    fn buffer(&self) -> &BytesMut;
 }
 
 #[cfg(test)]

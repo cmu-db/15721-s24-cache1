@@ -3,8 +3,9 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
+use crate::cache::ParpulseCache;
 use crate::error::ParpulseResult;
-use crate::storage_reader::{StorageReader, StorageReaderIterator};
+use crate::storage_manager::ParpulseReaderIterator;
 
 /// [`DiskManager`] contains the common logic to read from or write to a disk.
 ///
@@ -33,6 +34,7 @@ impl DiskManager {
     // FIXME: `mut` allows future statistics computation
     // TODO: only practical when you want to write data all at once
     pub fn write_disk_sync_all(&mut self, path: &str, content: &[u8]) -> ParpulseResult<()> {
+        // TODO: when path exists, we directly overwrite it, should we notify cache?
         let mut file = self.write_fd(path, false)?;
         Ok(file.write_all(content)?)
     }
@@ -40,7 +42,7 @@ impl DiskManager {
     // FIXME: do we need to record statistics for read?
     pub fn read_disk_sync_all(&self, path: &str) -> ParpulseResult<(usize, Bytes)> {
         let mut file = File::open(path)?;
-        let mut buffer = Vec::new();
+        let mut buffer = Vec::with_capacity(file.metadata()?.len() as usize);
         let bytes_read = file.read_to_end(&mut buffer)?;
         Ok((bytes_read, Bytes::from(buffer)))
     }
@@ -76,7 +78,7 @@ impl DiskManager {
         disk_path: &str,
     ) -> ParpulseResult<usize>
     where
-        T: StorageReaderIterator,
+        T: ParpulseReaderIterator,
     {
         if Path::new(disk_path).exists() {
             return Err(io::Error::new(
@@ -128,8 +130,10 @@ impl DiskReadSyncIterator {
     }
 }
 
-impl StorageReaderIterator for DiskReadSyncIterator {
-    fn next(&mut self) -> Option<ParpulseResult<usize>> {
+impl Iterator for DiskReadSyncIterator {
+    type Item = ParpulseResult<usize>;
+
+    fn next(&mut self) -> Option<Self::Item> {
         match self.f.read(self.buffer.as_mut()) {
             Ok(bytes_read) => {
                 if bytes_read > 0 {
@@ -141,7 +145,9 @@ impl StorageReaderIterator for DiskReadSyncIterator {
             Err(e) => Some(Err(e.into())),
         }
     }
+}
 
+impl ParpulseReaderIterator for DiskReadSyncIterator {
     fn buffer(&self) -> &BytesMut {
         &self.buffer
     }
