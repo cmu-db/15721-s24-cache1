@@ -57,7 +57,7 @@ impl<C: ParpulseCache> StorageManager<C> {
                     .disk_manager
                     .lock()
                     .await
-                    .disk_read_sync_iterator(cache_file_path, 1024)?;
+                    .disk_read_iterator(cache_file_path, 1024)?;
                 let mut data_size: usize = 0;
                 loop {
                     match output_iterator.next() {
@@ -93,7 +93,7 @@ impl<C: ParpulseCache> StorageManager<C> {
                     .disk_manager
                     .lock()
                     .await
-                    .write_reader_to_disk_sync(reader.into_iterator()?, &cache_value_path)?;
+                    .write_reader_to_disk(reader.into_iterator()?, &cache_value_path)?;
                 if !cache.put(key.clone(), (cache_value_path.clone(), data_size)) {
                     self.disk_manager
                         .lock()

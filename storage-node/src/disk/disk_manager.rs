@@ -34,21 +34,21 @@ impl DiskManager {
 
     // FIXME: `mut` allows future statistics computation
     // TODO: only practical when you want to write data all at once
-    pub fn write_disk_sync_all(&mut self, path: &str, content: &[u8]) -> ParpulseResult<()> {
+    pub fn write_disk_all(&mut self, path: &str, content: &[u8]) -> ParpulseResult<()> {
         // TODO: when path exists, we directly overwrite it, should we notify cache?
         let mut file = self.write_fd(path, false)?;
         Ok(file.write_all(content)?)
     }
 
     // FIXME: do we need to record statistics for read?
-    pub fn read_disk_sync_all(&self, path: &str) -> ParpulseResult<(usize, Bytes)> {
+    pub fn read_disk_all(&self, path: &str) -> ParpulseResult<(usize, Bytes)> {
         let mut file = File::open(path)?;
         let mut buffer = Vec::with_capacity(file.metadata()?.len() as usize);
         let bytes_read = file.read_to_end(&mut buffer)?;
         Ok((bytes_read, Bytes::from(buffer)))
     }
 
-    pub fn read_disk_sync(
+    pub fn read_disk(
         &self,
         path: &str,
         start_pos: u64,
@@ -63,8 +63,8 @@ impl DiskManager {
         Ok((bytes_read, Bytes::from(buffer)))
     }
 
-    // If needs to record statistics, use disk_read_sync_iterator, if not, please directly new DiskReadSyncIterator
-    pub fn disk_read_sync_iterator(
+    // If needs to record statistics, use disk_read_iterator, if not, please directly new DiskReadSyncIterator
+    pub fn disk_read_iterator(
         &self,
         path: &str,
         buffer_size: usize,
@@ -73,7 +73,7 @@ impl DiskManager {
     }
 
     // FIXME: disk_path should not exist, otherwise throw an error
-    pub fn write_reader_to_disk_sync<T>(
+    pub fn write_reader_to_disk<T>(
         &mut self,
         mut iterator: T,
         disk_path: &str,
@@ -163,8 +163,8 @@ mod tests {
         let path = "test_disk_manager1.txt";
         let content = "Hello, world!";
         disk_manager
-            .write_disk_sync_all(path, content.as_bytes())
-            .expect("write_disk_sync_all failed");
+            .write_disk_all(path, content.as_bytes())
+            .expect("write_disk_all failed");
         let mut file = disk_manager.write_fd(path, true).expect("write_fd failed");
         file.write_all(content.as_bytes()).unwrap();
 
@@ -172,14 +172,14 @@ mod tests {
         assert_eq!(file_size, 2 * content.len() as u64);
 
         let (bytes_read, bytes) = disk_manager
-            .read_disk_sync_all(path)
-            .expect("read_disk_sync_all failed");
+            .read_disk_all(path)
+            .expect("read_disk_all failed");
         assert_eq!(bytes_read, 2 * content.len());
         assert_eq!(bytes, Bytes::from(content.to_owned() + content));
 
         let (bytes_read, bytes) = disk_manager
-            .read_disk_sync(path, content.len() as u64, content.len())
-            .expect("read_disk_sync_all failed");
+            .read_disk(path, content.len() as u64, content.len())
+            .expect("read_disk_all failed");
         assert_eq!(bytes_read, content.len());
         assert_eq!(bytes, Bytes::from(content));
 
@@ -193,11 +193,11 @@ mod tests {
         let path = "test_disk_manager2.txt";
         let content = "bhjoilkmnkbhaoijsdklmnjkbhiauosdjikbhjoilkmnkbhaoijsdklmnjkbhiauosdjik";
         disk_manager
-            .write_disk_sync_all(path, content.as_bytes())
-            .expect("write_disk_sync_all failed");
+            .write_disk_all(path, content.as_bytes())
+            .expect("write_disk_all failed");
         let mut iterator = disk_manager
-            .disk_read_sync_iterator(path, 2)
-            .expect("disk_read_sync_iterator failed");
+            .disk_read_iterator(path, 2)
+            .expect("disk_read_iterator failed");
         let mut start_pos = 0;
         loop {
             if start_pos >= content.len() {
@@ -221,25 +221,25 @@ mod tests {
     }
 
     #[test]
-    fn test_write_reader_to_disk_sync() {
+    fn test_write_reader_to_disk() {
         let mut disk_manager = DiskManager {};
         let path = "test_disk_manager3.txt";
         let content = "bhjoilkmnkbhaoijsdklmnjkbhiauosdjikbhjoilkmnkbhaoijsdklmnjkbhiauosdjik";
         disk_manager
-            .write_disk_sync_all(path, content.as_bytes())
-            .expect("write_disk_sync_all failed");
+            .write_disk_all(path, content.as_bytes())
+            .expect("write_disk_all failed");
         let mut iterator = disk_manager
-            .disk_read_sync_iterator(path, 1)
-            .expect("disk_read_sync_iterator failed");
+            .disk_read_iterator(path, 1)
+            .expect("disk_read_iterator failed");
         let output_path = "test_disk_manager3_output.txt";
         let bytes_written = disk_manager
-            .write_reader_to_disk_sync::<DiskReadSyncIterator>(iterator, output_path)
-            .expect("write_reader_to_disk_sync failed");
+            .write_reader_to_disk::<DiskReadSyncIterator>(iterator, output_path)
+            .expect("write_reader_to_disk failed");
         assert_eq!(bytes_written, content.len());
 
         let (bytes_read, bytes) = disk_manager
-            .read_disk_sync_all(output_path)
-            .expect("read_disk_sync_all failed");
+            .read_disk_all(output_path)
+            .expect("read_disk_all failed");
         assert_eq!(bytes_read, content.len());
         assert_eq!(bytes, Bytes::from(content));
         let file_size = disk_manager

@@ -32,7 +32,7 @@ impl SyncStorageReader for MockS3Reader {
         // TODO: Definitely need to refactor (A real DiskManager held R&W lock, actual disk functions should be able directly call like disk_manager::xxx)
         // better to seperate manager & helper functions, mock s3 only need to call helper functions
         let mut disk_manager = DiskManager {};
-        let (bytes_read, bytes) = disk_manager.read_disk_sync_all(&self.file_path)?;
+        let (bytes_read, bytes) = disk_manager.read_disk_all(&self.file_path)?;
         Ok(bytes)
     }
 
