@@ -7,7 +7,7 @@ use tokio::sync::{Mutex, RwLock};
 
 use crate::{
     cache::{lru::LruCache, CacheValue, ParpulseCache},
-    disk::disk_manager::DiskManager,
+    disk::disk_manager_sync::DiskManagerSync,
     error::ParpulseResult,
     server::RequestParams,
     storage_reader::{mock_s3::MockS3Reader, SyncStorageReader},
@@ -22,14 +22,14 @@ use crate::{
 pub struct StorageManager<C: ParpulseCache> {
     // TODO: Consider making the cache lock-free.
     cache: RwLock<C>,
-    disk_manager: Mutex<DiskManager>,
+    disk_manager: Mutex<DiskManagerSync>,
     // TODO: cache_base_path should be from config
     // Cache_key = S3_PATH; Cache_value = (CACHE_BASE_PATH + S3_PATH, size)
     cache_base_path: String,
 }
 
 impl<C: ParpulseCache> StorageManager<C> {
-    pub fn new(cache: C, disk_manager: DiskManager, cache_base_path: String) -> Self {
+    pub fn new(cache: C, disk_manager: DiskManagerSync, cache_base_path: String) -> Self {
         Self {
             cache: RwLock::new(cache),
             disk_manager: Mutex::new(disk_manager),
@@ -139,7 +139,7 @@ mod tests {
     async fn test_storage_manager() {
         let dummy_size = 1000000;
         let cache = LruCache::new(dummy_size);
-        let disk_manager = DiskManager::default();
+        let disk_manager = DiskManagerSync::default();
         let storage_manager = StorageManager::new(cache, disk_manager, "test/".to_string());
 
         let request_path = "tests/parquet/house_price.parquet";

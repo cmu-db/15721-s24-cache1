@@ -1,7 +1,7 @@
 use enum_as_inner::EnumAsInner;
 
 use crate::{
-    cache::lru::LruCache, disk::disk_manager::DiskManager, error::ParpulseResult,
+    cache::lru::LruCache, disk::disk_manager_sync::DiskManagerSync, error::ParpulseResult,
     storage_manager::StorageManager,
 };
 
@@ -16,7 +16,7 @@ pub async fn storage_node_serve() -> ParpulseResult<()> {
     // TODO: Read the type of the cache from config.
     let dummy_size = 10;
     let cache = LruCache::new(dummy_size);
-    let disk_manager = DiskManager::default();
+    let disk_manager = DiskManagerSync::default();
     let storage_manager = StorageManager::new(cache, disk_manager, "cache/".to_string());
 
     // TODO:
