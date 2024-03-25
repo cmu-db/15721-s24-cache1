@@ -3,7 +3,7 @@ use std::{env, io, thread, time::Duration};
 use bytes::Bytes;
 
 use crate::{
-    disk::disk_manager::{DiskManager, DiskReadSyncIterator},
+    disk::disk_manager::{DiskManager, DiskReadIterator},
     error::ParpulseResult,
 };
 
@@ -27,7 +27,7 @@ impl MockS3Reader {
 }
 
 impl SyncStorageReader for MockS3Reader {
-    type ReaderIterator = DiskReadSyncIterator;
+    type ReaderIterator = DiskReadIterator;
     fn read_all(&self) -> ParpulseResult<Bytes> {
         // TODO: Definitely need to refactor (A real DiskManager held R&W lock, actual disk functions should be able directly call like disk_manager::xxx)
         // better to seperate manager & helper functions, mock s3 only need to call helper functions
@@ -42,6 +42,6 @@ impl SyncStorageReader for MockS3Reader {
             thread::sleep(duration);
         }
         // Mock S3 should not count into disk statistics, so we directly new iterator
-        DiskReadSyncIterator::new(&self.file_path, self.buffer_size)
+        DiskReadIterator::new(&self.file_path, self.buffer_size)
     }
 }

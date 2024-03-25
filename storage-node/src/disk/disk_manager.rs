@@ -1,7 +1,7 @@
 use bytes::{Bytes, BytesMut};
 use std::borrow::Borrow;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Read, Seek, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use crate::cache::ParpulseCache;
@@ -55,7 +55,7 @@ impl DiskManager {
         bytes_to_read: usize,
     ) -> ParpulseResult<(usize, Bytes)> {
         let mut file = File::open(path)?;
-        file.seek(io::SeekFrom::Start(start_pos))?;
+        file.seek(SeekFrom::Start(start_pos))?;
 
         let mut buffer = vec![0; bytes_to_read];
         let bytes_read = file.read(&mut buffer)?;
@@ -63,13 +63,13 @@ impl DiskManager {
         Ok((bytes_read, Bytes::from(buffer)))
     }
 
-    // If needs to record statistics, use disk_read_iterator, if not, please directly new DiskReadSyncIterator
+    // If needs to record statistics, use disk_read_iterator, if not, please directly new DiskReadIterator
     pub fn disk_read_iterator(
         &self,
         path: &str,
         buffer_size: usize,
-    ) -> ParpulseResult<DiskReadSyncIterator> {
-        DiskReadSyncIterator::new(path, buffer_size)
+    ) -> ParpulseResult<DiskReadIterator> {
+        DiskReadIterator::new(path, buffer_size)
     }
 
     // FIXME: disk_path should not exist, otherwise throw an error
@@ -115,23 +115,23 @@ impl DiskManager {
 }
 
 /// FIXME: iterator for sync, stream for async
-pub struct DiskReadSyncIterator {
+pub struct DiskReadIterator {
     f: File,
     pub buffer: BytesMut,
 }
 
-impl DiskReadSyncIterator {
+impl DiskReadIterator {
     pub fn new(file_path: &str, buffer_size: usize) -> ParpulseResult<Self> {
         let f = File::open(file_path)?;
 
-        Ok(DiskReadSyncIterator {
+        Ok(DiskReadIterator {
             f,
             buffer: BytesMut::zeroed(buffer_size),
         })
     }
 }
 
-impl Iterator for DiskReadSyncIterator {
+impl Iterator for DiskReadIterator {
     type Item = ParpulseResult<usize>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -148,7 +148,7 @@ impl Iterator for DiskReadSyncIterator {
     }
 }
 
-impl ParpulseReaderIterator for DiskReadSyncIterator {
+impl ParpulseReaderIterator for DiskReadIterator {
     fn buffer(&self) -> &BytesMut {
         &self.buffer
     }
@@ -158,9 +158,11 @@ impl ParpulseReaderIterator for DiskReadSyncIterator {
 mod tests {
     use super::*;
     #[test]
-    fn test_simple_write_read_sync() {
+    fn test_simple_write_read() {
         let mut disk_manager = DiskManager {};
-        let path = "test_disk_manager1.txt";
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_owned();
+        let path = &dir.join("test_disk_manager1.txt").display().to_string();
         let content = "Hello, world!";
         disk_manager
             .write_disk_all(path, content.as_bytes())
@@ -182,15 +184,14 @@ mod tests {
             .expect("read_disk_all failed");
         assert_eq!(bytes_read, content.len());
         assert_eq!(bytes, Bytes::from(content));
-
-        disk_manager.remove_file(path).expect("remove_file failed");
-        assert!(!Path::new(path).exists());
     }
 
     #[test]
     fn test_iterator_read() {
         let mut disk_manager = DiskManager {};
-        let path = "test_disk_manager2.txt";
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_owned();
+        let path = &dir.join("test_disk_manager2.txt").display().to_string();
         let content = "bhjoilkmnkbhaoijsdklmnjkbhiauosdjikbhjoilkmnkbhaoijsdklmnjkbhiauosdjik";
         disk_manager
             .write_disk_all(path, content.as_bytes())
@@ -215,15 +216,14 @@ mod tests {
             start_pos += bytes_read;
         }
         assert_eq!(start_pos, content.len());
-
-        disk_manager.remove_file(path).expect("remove_file failed");
-        assert!(!Path::new(path).exists());
     }
 
     #[test]
     fn test_write_reader_to_disk() {
         let mut disk_manager = DiskManager {};
-        let path = "test_disk_manager3.txt";
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_owned();
+        let path = &dir.join("test_disk_manager3.txt").display().to_string();
         let content = "bhjoilkmnkbhaoijsdklmnjkbhiauosdjikbhjoilkmnkbhaoijsdklmnjkbhiauosdjik";
         disk_manager
             .write_disk_all(path, content.as_bytes())
@@ -231,9 +231,12 @@ mod tests {
         let mut iterator = disk_manager
             .disk_read_iterator(path, 1)
             .expect("disk_read_iterator failed");
-        let output_path = "test_disk_manager3_output.txt";
+        let output_path = &dir
+            .join("test_disk_manager3_output.txt")
+            .display()
+            .to_string();
         let bytes_written = disk_manager
-            .write_reader_to_disk::<DiskReadSyncIterator>(iterator, output_path)
+            .write_reader_to_disk::<DiskReadIterator>(iterator, output_path)
             .expect("write_reader_to_disk failed");
         assert_eq!(bytes_written, content.len());
 
@@ -246,12 +249,19 @@ mod tests {
             .file_size(output_path)
             .expect("file_size failed");
         assert_eq!(file_size, content.len() as u64);
+    }
 
+    #[test]
+    fn test_remove_file() {
+        let mut disk_manager = DiskManager {};
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_owned();
+        let path = &dir.join("test_disk_manager4.txt").display().to_string();
+        let content = "Hello, world!";
+        disk_manager
+            .write_disk_all(path, content.as_bytes())
+            .expect("write_disk_all failed");
         disk_manager.remove_file(path).expect("remove_file failed");
         assert!(!Path::new(path).exists());
-        disk_manager
-            .remove_file(output_path)
-            .expect("remove_file failed");
-        assert!(!Path::new(output_path).exists());
     }
 }
