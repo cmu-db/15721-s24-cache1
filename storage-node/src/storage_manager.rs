@@ -118,8 +118,14 @@ impl<C: ParpulseCache> StorageManager<C> {
 
 // This iterator will utilize same buffer to read all the data, please only use it when sync.
 // The major difference with ParpulseReaderIterator and Stream is the return type &BytesMut vs Bytes
+// I still think we should use &BytesMut, since multiple reads should have different Iterators/Streams
 // &BytesMut has no data copy, Bytes allows multiple async read at the same time
+// fn buffer(&self) -> &BytesMut; ensures Iterator has a buffer
 pub trait ParpulseReaderIterator: Iterator<Item = ParpulseResult<usize>> {
+    fn buffer(&self) -> &BytesMut;
+}
+
+pub trait ParpulseReaderStream: Stream<Item = ParpulseResult<usize>> {
     fn buffer(&self) -> &BytesMut;
 }
 

@@ -1,4 +1,5 @@
 use bytes::{Bytes, BytesMut};
+use std::borrow::Borrow;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
@@ -121,10 +122,10 @@ pub struct DiskReadSyncIterator {
 
 impl DiskReadSyncIterator {
     pub fn new(file_path: &str, buffer_size: usize) -> ParpulseResult<Self> {
-        let file = File::open(file_path)?;
+        let f = File::open(file_path)?;
 
         Ok(DiskReadSyncIterator {
-            f: file,
+            f,
             buffer: BytesMut::zeroed(buffer_size),
         })
     }
