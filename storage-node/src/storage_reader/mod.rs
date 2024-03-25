@@ -12,7 +12,7 @@ pub mod s3;
 pub trait SyncStorageReader {
     type ReaderIterator: ParpulseReaderIterator;
     fn read_all(&self) -> ParpulseResult<Bytes>;
-    fn into_iterator(&self) -> ParpulseResult<Self::ReaderIterator>;
+    fn into_iterator(self) -> ParpulseResult<Self::ReaderIterator>;
 }
 
 pub type StorageDataStream = BoxStream<'static, ParpulseResult<Bytes>>;

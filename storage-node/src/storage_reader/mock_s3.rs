@@ -37,7 +37,7 @@ impl SyncStorageReader for MockS3Reader {
     }
 
     // FIXME: Where to put size? Do we need to also return `read_size` in this method?
-    fn into_iterator(&self) -> ParpulseResult<Self::ReaderIterator> {
+    fn into_iterator(self) -> ParpulseResult<Self::ReaderIterator> {
         if let Some(duration) = self.delay {
             thread::sleep(duration);
         }
