@@ -7,9 +7,10 @@ use crate::{
     cache::{lru::LruCache, CacheValue, ParpulseCache},
     disk::disk_manager::DiskManager,
     error::ParpulseResult,
-    server::RequestParams,
     storage_reader::{mock_s3::MockS3Reader, StorageReader, StorageReaderIterator},
 };
+
+use storage_common::RequestParams;
 
 /// [`StorageManager`] handles the request from the storage client.
 ///
