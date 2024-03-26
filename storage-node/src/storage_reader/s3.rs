@@ -60,9 +60,9 @@ pub struct S3DataStream {
     bucket: String,
     keys: Vec<String>,
     current_key: usize,
-    buffer: BytesMut,
+    buffer_inner: BytesMut,
     chunk_size: usize,
-    buffer_return: BytesMut,
+    buffer: BytesMut,
 
     object_fut:
         Option<BoxFuture<'static, Result<GetObjectOutput, SdkError<GetObjectError, Response>>>>,
@@ -83,11 +83,11 @@ impl S3DataStream {
             bucket,
             keys,
             current_key: 0,
-            buffer: BytesMut::new(),
+            buffer_inner: BytesMut::new(),
             chunk_size,
             object_fut: Some(fut),
             data_fut: None,
-            buffer_return: BytesMut::new(),
+            buffer: BytesMut::new(),
         }
     }
 }
@@ -111,29 +111,31 @@ impl Stream for S3DataStream {
                 Ok(bytes) => {
                     self.data_fut.take();
                     // TODO: extend is real `copy`, expensive! Can we directly turn AggregateBytes to BytesMut?
-                    self.buffer.extend(bytes.into_bytes());
+                    let data = bytes.into_bytes();
                     // TODO: If we don't need chunksize (since it will cause more frequent disk I/O), we can
                     // add `self.chunksize = bytes.into_bytes().len()` here, and don't forget to modify tests!
                     // We keep chunksize for now, so we can benchmark w/o it in the future.
+                    // self.chunk_size = data.len();
+                    self.buffer_inner.extend(data);
                     self.poll_next(cx)
                 }
                 Err(e) => Poll::Ready(Some(Err(ParpulseError::from(e)))),
             }
-        } else if self.buffer.remaining() >= self.chunk_size {
+        } else if self.buffer_inner.remaining() >= self.chunk_size {
             // There are enough data to consume in the buffer. Return the data directly.
             let chunk_size = self.chunk_size;
-            self.buffer_return = self.buffer.split_to(chunk_size);
+            self.buffer = self.buffer_inner.split_to(chunk_size);
             Poll::Ready(Some(Ok(chunk_size)))
         } else {
             // The size of the remaining data is less than the chunk size.
             if self.current_key + 1 >= self.keys.len() {
-                if self.buffer.is_empty() {
+                if self.buffer_inner.is_empty() {
                     // No more data. Return None.
                     Poll::Ready(None)
                 } else {
                     // No more data in S3. Just return the remaining data.
-                    let remaining_len = self.buffer.len();
-                    self.buffer_return = self.buffer.split_to(remaining_len);
+                    let remaining_len = self.buffer_inner.len();
+                    self.buffer = self.buffer_inner.split_to(remaining_len);
                     Poll::Ready(Some(Ok(remaining_len)))
                 }
             } else {
@@ -154,11 +156,8 @@ impl Stream for S3DataStream {
 }
 
 impl ParpulseReaderStream for S3DataStream {
-    #[allow(clippy::misnamed_getters)]
     fn buffer(&self) -> &[u8] {
-        // TODO: We should return self.buffer to match.
-        // Maybe rename this method to `buffer_current`...
-        &self.buffer_return
+        &self.buffer
     }
 }
 
