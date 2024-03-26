@@ -151,7 +151,10 @@ impl Stream for S3DataStream {
 }
 
 impl ParpulseReaderStream for S3DataStream {
+    #[allow(clippy::misnamed_getters)]
     fn buffer(&self) -> &[u8] {
+        // TODO: We should return self.buffer to match.
+        // Maybe rename this method to `buffer_current`...
         &self.buffer_return
     }
 }
