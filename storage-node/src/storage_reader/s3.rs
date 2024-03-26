@@ -112,6 +112,9 @@ impl Stream for S3DataStream {
                     self.data_fut.take();
                     // TODO: extend is real `copy`, expensive! Can we directly turn AggregateBytes to BytesMut?
                     self.buffer.extend(bytes.into_bytes());
+                    // TODO: If we don't need chunksize (since it will cause more frequent disk I/O), we can
+                    // add `self.chunksize = bytes.into_bytes().len()` here, and don't forget to modify tests!
+                    // We keep chunksize for now, so we can benchmark w/o it in the future.
                     self.poll_next(cx)
                 }
                 Err(e) => Poll::Ready(Some(Err(ParpulseError::from(e)))),
