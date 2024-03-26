@@ -17,9 +17,12 @@ use bytes::{Buf, Bytes, BytesMut};
 use datafusion::error::DataFusionError;
 use futures::{future::BoxFuture, ready, Future, FutureExt, Stream};
 
-use crate::error::{ParpulseError, ParpulseResult};
+use crate::{
+    error::{ParpulseError, ParpulseResult},
+    storage_manager::ParpulseReaderStream,
+};
 
-use super::{AsyncStorageReader, StorageDataStream};
+use super::AsyncStorageReader;
 
 const DEFAULT_CHUNK_SIZE: usize = 1024;
 
@@ -49,6 +52,9 @@ impl S3Reader {
 
 /// [`S3DataStream`] is a stream for reading data from S3. It reads the data in
 /// chunks and returns the data in a stream.
+///
+/// If we want to use fixed buffer for benchmark, we can add self.last_read_size and
+/// self.current_buffer_pos.
 pub struct S3DataStream {
     client: Client,
     bucket: String,
@@ -56,6 +62,7 @@ pub struct S3DataStream {
     current_key: usize,
     buffer: BytesMut,
     chunk_size: usize,
+    buffer_return: BytesMut,
 
     object_fut:
         Option<BoxFuture<'static, Result<GetObjectOutput, SdkError<GetObjectError, Response>>>>,
@@ -80,12 +87,13 @@ impl S3DataStream {
             chunk_size,
             object_fut: Some(fut),
             data_fut: None,
+            buffer_return: BytesMut::new(),
         }
     }
 }
 
 impl Stream for S3DataStream {
-    type Item = ParpulseResult<Bytes>;
+    type Item = ParpulseResult<usize>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         if let Some(object_fut) = self.object_fut.as_mut() {
@@ -102,6 +110,7 @@ impl Stream for S3DataStream {
             match ready!(data_fut.poll_unpin(cx)) {
                 Ok(bytes) => {
                     self.data_fut.take();
+                    // TODO: extend is real `copy`, expensive! Can we directly turn AggregateBytes to BytesMut?
                     self.buffer.extend(bytes.into_bytes());
                     self.poll_next(cx)
                 }
@@ -110,8 +119,8 @@ impl Stream for S3DataStream {
         } else if self.buffer.remaining() >= self.chunk_size {
             // There are enough data to consume in the buffer. Return the data directly.
             let chunk_size = self.chunk_size;
-            let bytes = self.buffer.copy_to_bytes(chunk_size);
-            Poll::Ready(Some(Ok(bytes)))
+            self.buffer_return = self.buffer.split_to(chunk_size);
+            Poll::Ready(Some(Ok(chunk_size)))
         } else {
             // The size of the remaining data is less than the chunk size.
             if self.current_key + 1 >= self.keys.len() {
@@ -121,8 +130,8 @@ impl Stream for S3DataStream {
                 } else {
                     // No more data in S3. Just return the remaining data.
                     let remaining_len = self.buffer.len();
-                    let remaining_data = self.buffer.copy_to_bytes(remaining_len);
-                    Poll::Ready(Some(Ok(remaining_data)))
+                    self.buffer_return = self.buffer.split_to(remaining_len);
+                    Poll::Ready(Some(Ok(remaining_len)))
                 }
             } else {
                 // There are more data in S3. Fetch the next object.
@@ -141,8 +150,16 @@ impl Stream for S3DataStream {
     }
 }
 
+impl ParpulseReaderStream for S3DataStream {
+    fn buffer(&self) -> &[u8] {
+        &self.buffer_return
+    }
+}
+
 #[async_trait]
 impl AsyncStorageReader for S3Reader {
+    type ReaderStream = S3DataStream;
+
     /// NEVER call this method if you do not know the size of the data -- collecting
     /// all data into one buffer might lead to OOM.
     async fn read_all(&self) -> ParpulseResult<Bytes> {
@@ -168,7 +185,7 @@ impl AsyncStorageReader for S3Reader {
         Ok(bytes.freeze())
     }
 
-    async fn into_stream(self) -> ParpulseResult<StorageDataStream> {
+    async fn into_stream(self) -> ParpulseResult<Pin<Box<Self::ReaderStream>>> {
         let s3_stream = S3DataStream::new(
             self.client,
             self.bucket,
@@ -214,10 +231,11 @@ mod tests {
 
         let mut streaming_read_count = 0;
         let mut streaming_total_bytes = 0;
-        while let Some(data) = s3_stream.next().await {
-            let data = data.unwrap();
+        while let Some(data_len) = s3_stream.next().await {
+            let data_len = data_len.unwrap();
             streaming_read_count += 1;
-            streaming_total_bytes += data.len();
+            streaming_total_bytes += data_len;
+            assert_eq!(s3_stream.buffer().len(), data_len);
         }
         assert_eq!(streaming_total_bytes, 565545);
         assert_eq!(streaming_read_count, 553);

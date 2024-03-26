@@ -131,7 +131,7 @@ impl DiskReadStream {
 }
 
 impl ParpulseReaderStream for DiskReadStream {
-    fn buffer(&self) -> &BytesMut {
+    fn buffer(&self) -> &[u8] {
         &self.buffer
     }
 }

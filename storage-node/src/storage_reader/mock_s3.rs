@@ -7,7 +7,7 @@ use crate::{
     error::ParpulseResult,
 };
 
-use super::{StorageDataStream, SyncStorageReader};
+use super::SyncStorageReader;
 
 pub struct MockS3Reader {
     file_path: String,

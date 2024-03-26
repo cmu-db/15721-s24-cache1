@@ -149,7 +149,7 @@ impl Iterator for DiskReadIterator {
 }
 
 impl ParpulseReaderIterator for DiskReadIterator {
-    fn buffer(&self) -> &BytesMut {
+    fn buffer(&self) -> &[u8] {
         &self.buffer
     }
 }

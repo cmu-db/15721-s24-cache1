@@ -1,9 +1,15 @@
+use std::pin::Pin;
+
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use datafusion::physical_plan::streaming::PartitionStream;
 use futures::{stream::BoxStream, Stream};
 
-use crate::{cache::ParpulseCache, error::ParpulseResult, storage_manager::ParpulseReaderIterator};
+use crate::{
+    cache::ParpulseCache,
+    error::ParpulseResult,
+    storage_manager::{ParpulseReaderIterator, ParpulseReaderStream},
+};
 
 pub mod local_fs;
 pub mod mock_s3;
@@ -15,11 +21,10 @@ pub trait SyncStorageReader {
     fn into_iterator(self) -> ParpulseResult<Self::ReaderIterator>;
 }
 
-pub type StorageDataStream = BoxStream<'static, ParpulseResult<Bytes>>;
-
 // TODO: Merge `StorageReader` with `AsyncStorageReader`.
 #[async_trait]
 pub trait AsyncStorageReader {
+    type ReaderStream: ParpulseReaderStream;
     /// Read all data at once from the underlying storage.
     ///
     /// NEVER call this method if you do not know the size of the data -- collecting
@@ -27,5 +32,5 @@ pub trait AsyncStorageReader {
     async fn read_all(&self) -> ParpulseResult<Bytes>;
 
     /// Read data from the underlying storage as a stream.
-    async fn into_stream(self) -> ParpulseResult<StorageDataStream>;
+    async fn into_stream(self) -> ParpulseResult<Pin<Box<Self::ReaderStream>>>;
 }

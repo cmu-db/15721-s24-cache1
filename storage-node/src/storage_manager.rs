@@ -117,16 +117,28 @@ impl<C: ParpulseCache> StorageManager<C> {
 }
 
 // This iterator will utilize same buffer to read all the data, please only use it when sync.
-// The major difference with ParpulseReaderIterator and Stream is the return type &BytesMut vs Bytes
-// I still think we should use &BytesMut, since multiple reads should have different Iterators/Streams
-// &BytesMut has no data copy, Bytes allows multiple async read at the same time
-// fn buffer(&self) -> &BytesMut; ensures Iterator has a buffer
+// The reason why we not use ParpulseResult<Bytes> is this trait allows the possibility to
+// a fixed buffer, which makes sense to some disk method, and a fixed buffer may reduce unnecessary
+// memory allocation.
+// Current disk_manager implementation has one big drawback: it cannot send data to network and read
+// next data from disk at the same time. But this can be solved by 2 ways:
+// 1. the method from s3, buffer will be consumed and extended, but the memory allocation every time
+//    may be expensive.
+// 2. use 2 fixed buffers, one for reading from disk, one for sending to network, and use boolean
+//    member buffer_current to indicate which buffer is current buffer. But, it needs double space of
+//    original buffer, which means we can serve less requests, but one single request will handle faster.
+//    The first method also has similar problem, but it's more flexible in memory size.
+// We can implement both and benchmark at the end. This trait can be extended for both.
+
+// fn buffer(&self) -> &[u8]; ensures Iterator has a buffer
+// This buffer function returns the starting point of the result.
+// **NOTE**: The result buffer must be **CONTINUOUS** in bytes with the size in Item as its length.
 pub trait ParpulseReaderIterator: Iterator<Item = ParpulseResult<usize>> {
-    fn buffer(&self) -> &BytesMut;
+    fn buffer(&self) -> &[u8];
 }
 
 pub trait ParpulseReaderStream: Stream<Item = ParpulseResult<usize>> {
-    fn buffer(&self) -> &BytesMut;
+    fn buffer(&self) -> &[u8];
 }
 
 #[cfg(test)]
