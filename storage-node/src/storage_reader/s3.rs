@@ -1,5 +1,4 @@
 use std::{
-    collections::VecDeque,
     error::Error,
     pin::Pin,
     task::{Context, Poll},

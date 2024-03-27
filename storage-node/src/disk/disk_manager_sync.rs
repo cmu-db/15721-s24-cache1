@@ -1,12 +1,15 @@
 use bytes::{Bytes, BytesMut};
+use datafusion::physical_plan::streaming::PartitionStream;
+use futures::stream::StreamExt;
 use std::borrow::Borrow;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 
 use crate::cache::ParpulseCache;
 use crate::error::ParpulseResult;
-use crate::storage_manager::ParpulseReaderIterator;
+use crate::storage_manager::{ParpulseReaderIterator, ParpulseReaderStream};
 
 /// [`DiskManagerSync`] contains the common logic to read from or write to a disk.
 ///
@@ -73,7 +76,7 @@ impl DiskManagerSync {
     }
 
     // FIXME: disk_path should not exist, otherwise throw an error
-    pub fn write_reader_to_disk<T>(
+    pub fn write_iterator_reader_to_disk<T>(
         &mut self,
         mut iterator: T,
         disk_path: &str,
@@ -94,6 +97,39 @@ impl DiskManagerSync {
             match iterator.next() {
                 Some(Ok(bytes_read)) => {
                     let buffer = iterator.buffer();
+                    file.write_all(&buffer[..bytes_read])?;
+                    bytes_written += bytes_read;
+                }
+                Some(Err(e)) => return Err(e),
+                None => break,
+            }
+        }
+        Ok(bytes_written)
+    }
+
+    // I have to add a `async` here... Better way?
+    pub async fn write_stream_reader_to_disk<T>(
+        &mut self,
+        mut stream: Pin<Box<T>>,
+        disk_path: &str,
+    ) -> ParpulseResult<usize>
+    where
+        T: ParpulseReaderStream,
+    {
+        if Path::new(disk_path).exists() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "disk file to write already exists",
+            )
+            .into());
+        }
+        let mut file = self.write_fd(disk_path, true)?;
+        let mut bytes_written = 0;
+
+        loop {
+            match stream.next().await {
+                Some(Ok(bytes_read)) => {
+                    let buffer = stream.buffer();
                     file.write_all(&buffer[..bytes_read])?;
                     bytes_written += bytes_read;
                 }
@@ -156,6 +192,8 @@ impl ParpulseReaderIterator for DiskReadIterator {
 
 #[cfg(test)]
 mod tests {
+    use crate::disk::disk_manager::{DiskManager, DiskReadStream};
+
     use super::*;
     #[test]
     fn test_simple_write_read() {
@@ -219,7 +257,7 @@ mod tests {
     }
 
     #[test]
-    fn test_write_reader_to_disk() {
+    fn test_write_iterator_reader_to_disk() {
         let mut disk_manager = DiskManagerSync {};
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_owned();
@@ -236,7 +274,43 @@ mod tests {
             .display()
             .to_string();
         let bytes_written = disk_manager
-            .write_reader_to_disk::<DiskReadIterator>(iterator, output_path)
+            .write_iterator_reader_to_disk::<DiskReadIterator>(iterator, output_path)
+            .expect("write_reader_to_disk failed");
+        assert_eq!(bytes_written, content.len());
+
+        let (bytes_read, bytes) = disk_manager
+            .read_disk_all(output_path)
+            .expect("read_disk_all failed");
+        assert_eq!(bytes_read, content.len());
+        assert_eq!(bytes, Bytes::from(content));
+        let file_size = disk_manager
+            .file_size(output_path)
+            .expect("file_size failed");
+        assert_eq!(file_size, content.len() as u64);
+    }
+
+    #[tokio::test]
+    async fn test_write_stream_reader_to_disk() {
+        let mut disk_manager = DiskManagerSync {};
+        let disk_manager_async = DiskManager {};
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_owned();
+        let path = &dir.join("test_disk_manager3.txt").display().to_string();
+        let content = "bhjoilkmnkbhaoijsdklmnjkbhiauosdjikbhjoilkmnkbhaoijsdklmnjkbhiauosdjik";
+        disk_manager
+            .write_disk_all(path, content.as_bytes())
+            .expect("write_disk_all failed");
+        let mut stream = disk_manager_async
+            .disk_read_stream(path, 1)
+            .await
+            .expect("disk_read_iterator failed");
+        let output_path = &dir
+            .join("test_disk_manager3_output.txt")
+            .display()
+            .to_string();
+        let bytes_written = disk_manager
+            .write_stream_reader_to_disk::<DiskReadStream>(stream, output_path)
+            .await
             .expect("write_reader_to_disk failed");
         assert_eq!(bytes_written, content.len());
 
@@ -256,7 +330,7 @@ mod tests {
         let mut disk_manager = DiskManagerSync {};
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_owned();
-        let path = &dir.join("test_disk_manager4.txt").display().to_string();
+        let path = &dir.join("test_disk_manager5.txt").display().to_string();
         let content = "Hello, world!";
         disk_manager
             .write_disk_all(path, content.as_bytes())

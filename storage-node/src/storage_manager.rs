@@ -2,7 +2,7 @@ use std::{io, sync::Arc, time::Duration};
 
 use anyhow::bail;
 use bytes::BytesMut;
-use futures::Stream;
+use futures::{FutureExt, Stream};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::{
@@ -10,7 +10,7 @@ use crate::{
     disk::disk_manager_sync::DiskManagerSync,
     error::ParpulseResult,
     server::RequestParams,
-    storage_reader::{mock_s3::MockS3Reader, SyncStorageReader},
+    storage_reader::{s3_diskmock::MockS3Reader, AsyncStorageReader, SyncStorageReader},
 };
 
 /// [`StorageManager`] handles the request from the storage client.
@@ -37,6 +37,17 @@ impl<C: ParpulseCache> StorageManager<C> {
         }
     }
 
+    fn parse_s3_request(&self, request: &str) -> ParpulseResult<(String, Vec<String>)> {
+        let bucket = "tests/parquet/".to_string();
+        let keys = vec![
+            "userdata1.parquet".to_string(),
+            "userdata2.parquet".to_string(),
+        ];
+        Ok((bucket, keys))
+    }
+
+    // TODO: this function uses sync disk_manager, we should add a function to use async, and
+    // switch between them via configuration for benchmark.
     pub async fn get_data(&self, request: RequestParams) -> ParpulseResult<usize> {
         // 1. Try to get data from the cache first.
         // 2. If cache miss, then go to storage reader to fetch the data from
@@ -44,10 +55,15 @@ impl<C: ParpulseCache> StorageManager<C> {
         // 3. If needed, update the cache with the data fetched from the storage reader.
 
         // TODO: Support more request types.
-        let key = request.as_file().unwrap();
+        let s3_request = request.as_s3().unwrap();
+        let (bucket, keys) = self.parse_s3_request(s3_request)?;
         let mut cache = self.cache.write().await;
 
-        match cache.get(key) {
+        // TODO: now cache key is s3 raw request string, but it may be un reasonable, since
+        // for different requests, keys may overlap, maybe we should make key to be `bucket + one key`.
+        // And this needs refactor from both `storage_manager` and `s3`, since we need distinguish the
+        // bytes for different keys.
+        match cache.get(s3_request) {
             Some(value) => {
                 // Directly get data from the cache.
                 let cache_value_size = value.size();
@@ -77,12 +93,12 @@ impl<C: ParpulseCache> StorageManager<C> {
 
             None => {
                 // Get data from the underlying storage and put the data into the cache.
-                let cache_value_path = format!("{}{}", &self.cache_base_path, key);
+                let cache_value_path = format!("{}{}", &self.cache_base_path, s3_request);
 
                 // TODO:
                 // 1. Set buffer size from config
                 // 2. Support more types of storage.
-                let reader = MockS3Reader::new(key.clone(), Some(Duration::from_secs(2)), 1024);
+                let reader = MockS3Reader::new(bucket, keys).await;
 
                 // TODO:
                 // 1. Put the logics into `CacheManager`, which should handle the case where the write-out
@@ -93,8 +109,9 @@ impl<C: ParpulseCache> StorageManager<C> {
                     .disk_manager
                     .lock()
                     .await
-                    .write_reader_to_disk(reader.into_iterator()?, &cache_value_path)?;
-                if !cache.put(key.clone(), (cache_value_path.clone(), data_size)) {
+                    .write_stream_reader_to_disk(reader.into_stream().await?, &cache_value_path)
+                    .await?;
+                if !cache.put(s3_request.clone(), (cache_value_path.clone(), data_size)) {
                     self.disk_manager
                         .lock()
                         .await
@@ -149,30 +166,32 @@ mod tests {
 
     #[tokio::test]
     async fn test_storage_manager() {
+        // TODO: Use tmpfile to rewrite the test
         let dummy_size = 1000000;
         let cache = LruCache::new(dummy_size);
         let disk_manager = DiskManagerSync::default();
-        let storage_manager = StorageManager::new(cache, disk_manager, "test/".to_string());
 
-        let request_path = "tests/parquet/house_price.parquet";
-        let request = RequestParams::File(request_path.to_string());
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_owned();
+        let storage_manager = StorageManager::new(
+            cache,
+            disk_manager,
+            dir.join("test_disk_manager2.txt").display().to_string(),
+        );
+
+        let request_path = "dummy_s3_request";
+        let request = RequestParams::S3(request_path.to_string());
 
         let mut start_time = Instant::now();
         let result = storage_manager.get_data(request.clone()).await;
         assert!(result.is_ok());
-        assert_eq!(
-            result.unwrap(),
-            fs::metadata(request_path).unwrap().len() as usize
-        );
+        assert_eq!(result.unwrap(), 113629 + 112193);
         let delta_time_miss = Instant::now() - start_time;
 
         start_time = Instant::now();
         let result = storage_manager.get_data(request).await;
         assert!(result.is_ok());
-        assert_eq!(
-            result.unwrap(),
-            fs::metadata(request_path).unwrap().len() as usize
-        );
+        assert_eq!(result.unwrap(), 113629 + 112193);
         let delta_time_hit = Instant::now() - start_time;
 
         println!(

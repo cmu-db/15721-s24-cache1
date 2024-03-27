@@ -12,8 +12,11 @@ use crate::{
 };
 
 pub mod local_fs;
-pub mod mock_s3;
 pub mod s3;
+// TODO: We can use `use mockall::automock;` to mock s3.
+// (https://docs.aws.amazon.com/sdk-for-rust/latest/dg/testing.html)
+// pub mod s3_automock;
+pub mod s3_diskmock;
 
 pub trait SyncStorageReader {
     type ReaderIterator: ParpulseReaderIterator;

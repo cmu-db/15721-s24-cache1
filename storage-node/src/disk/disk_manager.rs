@@ -17,6 +17,7 @@ use crate::error::ParpulseResult;
 use crate::storage_manager::ParpulseReaderStream;
 
 // TODO: Do we need to put disk_root_path into DiskManager?
+#[derive(Default)]
 pub struct DiskManager {}
 
 impl DiskManager {
@@ -64,6 +65,7 @@ impl DiskManager {
         Ok((bytes_read, Bytes::from(buffer)))
     }
 
+    // call this method will record statistics, directly generating stream will not record statistics
     pub async fn disk_read_stream(
         &self,
         path: &str,
@@ -109,6 +111,11 @@ impl DiskManager {
         Ok(metadata.len())
     }
 
+    pub fn file_size_sync(&self, path: &str) -> ParpulseResult<u64> {
+        let metadata = std::fs::metadata(path)?;
+        Ok(metadata.len())
+    }
+
     pub async fn remove_file(&mut self, path: &str) -> ParpulseResult<()> {
         Ok(fs::remove_file(path).await?)
     }
@@ -120,6 +127,17 @@ pub struct DiskReadStream {
 }
 
 impl DiskReadStream {
+    pub fn new_sync(file_path: &str, buffer_size: usize) -> ParpulseResult<Self> {
+        let f: std::fs::File = std::fs::File::open(file_path)?;
+        // println!("{:?}", res);
+        // let f = File::open(file_path).await?;
+
+        Ok(DiskReadStream {
+            f: File::from_std(f),
+            buffer: BytesMut::zeroed(buffer_size),
+        })
+    }
+
     pub async fn new(file_path: &str, buffer_size: usize) -> ParpulseResult<Self> {
         let f = File::open(file_path).await?;
 
