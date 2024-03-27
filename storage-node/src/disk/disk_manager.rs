@@ -41,7 +41,8 @@ impl DiskManager {
 
     pub async fn write_disk_all(&mut self, path: &str, content: &[u8]) -> ParpulseResult<()> {
         let mut file = self.write_fd(path, false).await?;
-        Ok(file.write_all(content).await?)
+        file.write_all(content).await?;
+        Ok(file.flush().await?)
     }
 
     pub async fn read_disk_all(&self, path: &str) -> ParpulseResult<(usize, Bytes)> {
@@ -110,6 +111,8 @@ impl DiskManager {
                 None => break,
             }
         }
+        // FIXME: do we need a flush here?
+        file.flush().await?;
         Ok(bytes_written)
     }
 
@@ -191,7 +194,7 @@ mod tests {
         let mut disk_manager = DiskManager {};
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_owned();
-        let path = &dir.join("test_disk_manager.txt").display().to_string();
+        let path = &dir.join("test_disk_manager1.txt").display().to_string();
         let content = "Hello, world!";
         disk_manager
             .write_disk_all(path, content.as_bytes())
@@ -202,6 +205,9 @@ mod tests {
             .await
             .expect("write_fd failed");
         file.write_all(content.as_bytes()).await.unwrap();
+        // Without this code, this test will fail sometimes.
+        // But even if we add this code, this test is not likely to fail in the sync version.
+        file.flush().await.unwrap();
 
         let file_size = disk_manager
             .file_size(path)
@@ -229,7 +235,7 @@ mod tests {
         let mut disk_manager = DiskManager {};
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_owned();
-        let path = &dir.join("test_disk_manager.txt").display().to_string();
+        let path = &dir.join("test_disk_manager2.txt").display().to_string();
         let content = "bhjoilkmnkbhaoijsdklmnjkbhiauosdjikbhjoilkmnkbhaoijsdklmnjkbhiauosdjik";
         disk_manager
             .write_disk_all(path, content.as_bytes())
@@ -264,7 +270,7 @@ mod tests {
         let mut disk_manager = DiskManager {};
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_owned();
-        let path = &dir.join("test_disk_manager.txt").display().to_string();
+        let path = &dir.join("test_disk_manager3.txt").display().to_string();
         let content = "bhjoilkmnkbhaoijsdklmnjkbhiauosdjikbhjoilkmnkbhaoijsdklmnjkbhiauosdjik";
         disk_manager
             .write_disk_all(path, content.as_bytes())
@@ -302,7 +308,7 @@ mod tests {
         let mut disk_manager = DiskManager {};
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_owned();
-        let path = &dir.join("test_disk_manager.txt").display().to_string();
+        let path = &dir.join("test_disk_manager4.txt").display().to_string();
         let content = "Hello, world!";
         disk_manager
             .write_disk_all(path, content.as_bytes())

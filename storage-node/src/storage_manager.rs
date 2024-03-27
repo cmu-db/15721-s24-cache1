@@ -166,7 +166,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_storage_manager() {
-        // TODO: Use tmpfile to rewrite the test
         let dummy_size = 1000000;
         let cache = LruCache::new(dummy_size);
         let disk_manager = DiskManagerSync::default();
@@ -176,7 +175,7 @@ mod tests {
         let storage_manager = StorageManager::new(
             cache,
             disk_manager,
-            dir.join("test_disk_manager2.txt").display().to_string(),
+            dir.join("test_storage_manager.txt").display().to_string(),
         );
 
         let request_path = "dummy_s3_request";
@@ -199,7 +198,5 @@ mod tests {
             delta_time_miss, delta_time_hit
         );
         assert!(delta_time_miss > delta_time_hit);
-
-        fs::remove_dir_all(storage_manager.cache_base_path.clone());
     }
 }
