@@ -39,7 +39,7 @@ impl MockS3Reader {
     pub async fn new(bucket: String, keys: Vec<String>) -> Self {
         let file_paths: Vec<String> = keys
             .iter()
-            .map(|key| format!("{}{}", bucket, key))
+            .map(|key| format!("{}{}", bucket.replace('-', "/") + "/", key))
             .collect();
         MockS3Reader {
             file_paths,
@@ -151,7 +151,7 @@ mod tests {
     use super::*;
     #[tokio::test]
     async fn test_simple_write_read() {
-        let bucket = "tests/parquet/".to_string();
+        let bucket = "tests-parquet".to_string();
         let keys = vec![
             "userdata1.parquet".to_string(),
             "userdata2.parquet".to_string(),
@@ -163,7 +163,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mock_s3_read_streaming() {
-        let bucket = "tests/parquet/".to_string();
+        let bucket = "tests-parquet".to_string();
         let keys = vec![
             "userdata1.parquet".to_string(),
             "userdata2.parquet".to_string(),

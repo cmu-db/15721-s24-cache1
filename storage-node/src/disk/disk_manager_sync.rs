@@ -18,7 +18,7 @@ pub struct DiskManagerSync {}
 
 // TODO: Make each method accepting `&self` instead of `&mut self`.
 impl DiskManagerSync {
-    pub fn write_fd(&self, path: &str, append: bool) -> ParpulseResult<File> {
+    pub fn open_or_create(&self, path: &str, append: bool) -> ParpulseResult<File> {
         let path_buf: PathBuf = PathBuf::from(path);
         if let Some(parent) = path_buf.parent() {
             if !parent.exists() {
@@ -37,7 +37,7 @@ impl DiskManagerSync {
     // FIXME: `mut` allows future statistics computation
     pub fn write_disk_all(&mut self, path: &str, content: &[u8]) -> ParpulseResult<()> {
         // TODO: when path exists, we directly overwrite it, should we notify cache?
-        let mut file = self.write_fd(path, false)?;
+        let mut file = self.open_or_create(path, false)?;
         file.write_all(content)?;
         Ok(file.flush()?)
     }
@@ -90,7 +90,7 @@ impl DiskManagerSync {
             )
             .into());
         }
-        let mut file = self.write_fd(disk_path, true)?;
+        let mut file = self.open_or_create(disk_path, true)?;
         let mut bytes_written = 0;
         loop {
             match iterator.next() {
@@ -124,7 +124,7 @@ impl DiskManagerSync {
             )
             .into());
         }
-        let mut file = self.write_fd(disk_path, true)?;
+        let mut file = self.open_or_create(disk_path, true)?;
         let mut bytes_written = 0;
 
         loop {
@@ -209,7 +209,9 @@ mod tests {
         disk_manager
             .write_disk_all(path, content.as_bytes())
             .expect("write_disk_all failed");
-        let mut file = disk_manager.write_fd(path, true).expect("write_fd failed");
+        let mut file = disk_manager
+            .open_or_create(path, true)
+            .expect("open_or_create failed");
         file.write_all(content.as_bytes()).unwrap();
         file.flush().unwrap();
 

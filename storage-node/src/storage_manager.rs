@@ -39,7 +39,7 @@ impl<C: ParpulseCache> StorageManager<C> {
 
     // TODO: This is a dummy function.
     fn parse_s3_request(&self, request: &str) -> ParpulseResult<(String, Vec<String>)> {
-        let bucket = "tests/parquet/".to_string();
+        let bucket = "tests-parquet".to_string();
         let keys = vec![
             "userdata1.parquet".to_string(),
             "userdata2.parquet".to_string(),

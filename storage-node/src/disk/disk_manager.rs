@@ -23,7 +23,7 @@ use crate::storage_manager::ParpulseReaderStream;
 pub struct DiskManager {}
 
 impl DiskManager {
-    pub async fn write_fd(&self, path: &str, append: bool) -> ParpulseResult<File> {
+    pub async fn open_or_create(&self, path: &str, append: bool) -> ParpulseResult<File> {
         let path_buf: PathBuf = PathBuf::from(path);
         if let Some(parent) = path_buf.parent() {
             if !parent.exists() {
@@ -40,7 +40,7 @@ impl DiskManager {
     }
 
     pub async fn write_disk_all(&mut self, path: &str, content: &[u8]) -> ParpulseResult<()> {
-        let mut file = self.write_fd(path, false).await?;
+        let mut file = self.open_or_create(path, false).await?;
         file.write_all(content).await?;
         Ok(file.flush().await?)
     }
@@ -98,7 +98,7 @@ impl DiskManager {
             )
             .into());
         }
-        let mut file = self.write_fd(disk_path, true).await?;
+        let mut file = self.open_or_create(disk_path, true).await?;
         let mut bytes_written = 0;
         loop {
             match stream.next().await {
@@ -201,9 +201,9 @@ mod tests {
             .await
             .expect("write_disk_all failed");
         let mut file = disk_manager
-            .write_fd(path, true)
+            .open_or_create(path, true)
             .await
-            .expect("write_fd failed");
+            .expect("open_or_create failed");
         file.write_all(content.as_bytes()).await.unwrap();
         // Without this code, this test will fail sometimes.
         // But even if we add this code, this test is not likely to fail in the sync version.
