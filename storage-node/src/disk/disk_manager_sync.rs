@@ -1,5 +1,4 @@
 use bytes::{Bytes, BytesMut};
-use datafusion::physical_plan::streaming::PartitionStream;
 use futures::stream::StreamExt;
 use std::borrow::Borrow;
 use std::fs::{self, File, OpenOptions};
@@ -36,7 +35,6 @@ impl DiskManagerSync {
     }
 
     // FIXME: `mut` allows future statistics computation
-    // TODO: only practical when you want to write data all at once
     pub fn write_disk_all(&mut self, path: &str, content: &[u8]) -> ParpulseResult<()> {
         // TODO: when path exists, we directly overwrite it, should we notify cache?
         let mut file = self.write_fd(path, false)?;
@@ -200,7 +198,7 @@ mod tests {
         let mut disk_manager = DiskManagerSync {};
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_owned();
-        let path = &dir.join("test_disk_manager1.txt").display().to_string();
+        let path = &dir.join("test_disk_manager.txt").display().to_string();
         let content = "Hello, world!";
         disk_manager
             .write_disk_all(path, content.as_bytes())
@@ -229,7 +227,7 @@ mod tests {
         let mut disk_manager = DiskManagerSync {};
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_owned();
-        let path = &dir.join("test_disk_manager2.txt").display().to_string();
+        let path = &dir.join("test_disk_manager.txt").display().to_string();
         let content = "bhjoilkmnkbhaoijsdklmnjkbhiauosdjikbhjoilkmnkbhaoijsdklmnjkbhiauosdjik";
         disk_manager
             .write_disk_all(path, content.as_bytes())
@@ -261,7 +259,7 @@ mod tests {
         let mut disk_manager = DiskManagerSync {};
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_owned();
-        let path = &dir.join("test_disk_manager3.txt").display().to_string();
+        let path = &dir.join("test_disk_manager.txt").display().to_string();
         let content = "bhjoilkmnkbhaoijsdklmnjkbhiauosdjikbhjoilkmnkbhaoijsdklmnjkbhiauosdjik";
         disk_manager
             .write_disk_all(path, content.as_bytes())
@@ -295,7 +293,7 @@ mod tests {
         let disk_manager_async = DiskManager {};
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_owned();
-        let path = &dir.join("test_disk_manager3.txt").display().to_string();
+        let path = &dir.join("test_disk_manager.txt").display().to_string();
         let content = "bhjoilkmnkbhaoijsdklmnjkbhiauosdjikbhjoilkmnkbhaoijsdklmnjkbhiauosdjik";
         disk_manager
             .write_disk_all(path, content.as_bytes())
@@ -330,7 +328,7 @@ mod tests {
         let mut disk_manager = DiskManagerSync {};
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_owned();
-        let path = &dir.join("test_disk_manager5.txt").display().to_string();
+        let path = &dir.join("test_disk_manager.txt").display().to_string();
         let content = "Hello, world!";
         disk_manager
             .write_disk_all(path, content.as_bytes())

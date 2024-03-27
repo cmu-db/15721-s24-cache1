@@ -37,6 +37,7 @@ impl<C: ParpulseCache> StorageManager<C> {
         }
     }
 
+    // TODO: This is a dummy function.
     fn parse_s3_request(&self, request: &str) -> ParpulseResult<(String, Vec<String>)> {
         let bucket = "tests/parquet/".to_string();
         let keys = vec![
@@ -49,17 +50,16 @@ impl<C: ParpulseCache> StorageManager<C> {
     // TODO: this function uses sync disk_manager, we should add a function to use async, and
     // switch between them via configuration for benchmark.
     pub async fn get_data(&self, request: RequestParams) -> ParpulseResult<usize> {
-        // 1. Try to get data from the cache first.
-        // 2. If cache miss, then go to storage reader to fetch the data from
-        // the underlying storage.
-        // 3. If needed, update the cache with the data fetched from the storage reader.
-
+        /// 1. Try to get data from the cache first.
+        /// 2. If cache miss, then go to storage reader to fetch the data from
+        /// the underlying storage.
+        /// 3. If needed, update the cache with the data fetched from the storage reader.
         // TODO: Support more request types.
         let s3_request = request.as_s3().unwrap();
         let (bucket, keys) = self.parse_s3_request(s3_request)?;
         let mut cache = self.cache.write().await;
 
-        // TODO: now cache key is s3 raw request string, but it may be un reasonable, since
+        // TODO: now cache key is s3 raw request string, but it may be unreasonable, since
         // for different requests, keys may overlap, maybe we should make key to be `bucket + one key`.
         // And this needs refactor from both `storage_manager` and `s3`, since we need distinguish the
         // bytes for different keys.
@@ -133,23 +133,23 @@ impl<C: ParpulseCache> StorageManager<C> {
     }
 }
 
-// This iterator will utilize same buffer to read all the data, please only use it when sync.
-// The reason why we not use ParpulseResult<Bytes> is this trait allows the possibility to
-// a fixed buffer, which makes sense to some disk method, and a fixed buffer may reduce unnecessary
-// memory allocation.
-// Current disk_manager implementation has one big drawback: it cannot send data to network and read
-// next data from disk at the same time. But this can be solved by 2 ways:
-// 1. the method from s3, buffer will be consumed and extended, but the memory allocation every time
-//    may be expensive.
-// 2. use 2 fixed buffers, one for reading from disk, one for sending to network, and use boolean
-//    member buffer_current to indicate which buffer is current buffer. But, it needs double space of
-//    original buffer, which means we can serve less requests, but one single request will handle faster.
-//    The first method also has similar problem, but it's more flexible in memory size.
-// We can implement both and benchmark at the end. This trait can be extended for both.
+/// The reason why we not use ParpulseResult<Bytes> is this trait allows the possibility for
+/// a fixed buffer, which makes sense to some disk method, and a fixed buffer may reduce unnecessary
+/// memory allocation.
+/// Current disk_manager implementation has one big drawback: it cannot send data to network and read
+/// next data from disk at the same time. But this can be solved by 2 ways:
+/// 1. the method from s3, buffer will be consumed and extended, but the memory allocation every time
+///    may be expensive.
+/// 2. use 2 fixed buffers, one for reading from disk, one for sending to network, and use boolean
+///    member buffer_current to indicate which buffer is current buffer. But, it needs double space of
+///    original buffer, which means we can serve less requests, but one single request will handle faster.
+///    The first method also has similar problem, but it's more flexible in memory size.
+/// We can implement both and benchmark at the end. This trait can be extended for both.
+/// Currently, s3 utilizes method 1, and disk utilizes one single fixed buffer.
 
-// fn buffer(&self) -> &[u8]; ensures Iterator has a buffer
-// This buffer function returns the starting point of the result.
-// **NOTE**: The result buffer must be **CONTINUOUS** in bytes with the size in Item as its length.
+/// fn buffer(&self) -> &[u8]; ensures Iterator has a buffer
+/// This buffer function returns the starting point of the result.
+/// **NOTE**: The result buffer must be **CONTINUOUS** in bytes with the size in Item as its length.
 pub trait ParpulseReaderIterator: Iterator<Item = ParpulseResult<usize>> {
     fn buffer(&self) -> &[u8];
 }

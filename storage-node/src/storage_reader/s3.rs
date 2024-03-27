@@ -13,7 +13,6 @@ use aws_sdk_s3::{
 };
 use aws_smithy_runtime_api::{client::result::SdkError, http::Response};
 use bytes::{Buf, Bytes, BytesMut};
-use datafusion::error::DataFusionError;
 use futures::{future::BoxFuture, ready, Future, FutureExt, Stream};
 
 use crate::{
@@ -50,7 +49,8 @@ impl S3Reader {
 }
 
 /// [`S3DataStream`] is a stream for reading data from S3. It reads the data in
-/// chunks and returns the data in a stream.
+/// chunks and returns the data in a stream. Currently it uses non-fixed buffer,
+/// which means it will be consumed and extended.
 ///
 /// If we want to use fixed buffer for benchmark, we can add self.last_read_size and
 /// self.current_buffer_pos.

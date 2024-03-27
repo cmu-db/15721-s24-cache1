@@ -3,7 +3,6 @@ use futures::stream::BoxStream;
 use futures::stream::StreamExt;
 use futures::{FutureExt, Stream};
 use std::borrow::BorrowMut;
-use std::future::IntoFuture;
 use std::io::SeekFrom;
 use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
@@ -16,7 +15,10 @@ use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWriteExt};
 use crate::error::ParpulseResult;
 use crate::storage_manager::ParpulseReaderStream;
 
-// TODO: Do we need to put disk_root_path into DiskManager?
+/// [`DiskManager`] is responsible for reading and writing data to disk. The default
+/// version is async. We keep this struct to add lock.
+///
+/// TODO: Do we need to put disk_root_path into DiskManager?
 #[derive(Default)]
 pub struct DiskManager {}
 
@@ -65,7 +67,7 @@ impl DiskManager {
         Ok((bytes_read, Bytes::from(buffer)))
     }
 
-    // call this method will record statistics, directly generating stream will not record statistics
+    // If needs to record statistics, use disk_read_stream, if not, please directly new DiskReadStream.
     pub async fn disk_read_stream(
         &self,
         path: &str,
@@ -75,6 +77,11 @@ impl DiskManager {
         Ok(Box::pin(disk_read_stream))
     }
 
+    // FIXME: disk_path should not exist, otherwise throw an error
+    // TODO: we must handle write-write conflict correctly in the furture.
+    // One way is using `write commit` to handle read-write conflict, then there is no w-w conflict.
+    // TODO: we should write to disk & network at the same time. Maybe we can implement another `AsyncWriter`
+    // have method of `poll_write`, then we don't need to put this logic in the `disk_manager`.
     pub async fn write_reader_to_disk<T>(
         &mut self,
         mut stream: Pin<Box<T>>,
@@ -129,8 +136,6 @@ pub struct DiskReadStream {
 impl DiskReadStream {
     pub fn new_sync(file_path: &str, buffer_size: usize) -> ParpulseResult<Self> {
         let f: std::fs::File = std::fs::File::open(file_path)?;
-        // println!("{:?}", res);
-        // let f = File::open(file_path).await?;
 
         Ok(DiskReadStream {
             f: File::from_std(f),
@@ -186,7 +191,7 @@ mod tests {
         let mut disk_manager = DiskManager {};
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_owned();
-        let path = &dir.join("test_disk_manager1.txt").display().to_string();
+        let path = &dir.join("test_disk_manager.txt").display().to_string();
         let content = "Hello, world!";
         disk_manager
             .write_disk_all(path, content.as_bytes())
@@ -224,7 +229,7 @@ mod tests {
         let mut disk_manager = DiskManager {};
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_owned();
-        let path = &dir.join("test_disk_manager2.txt").display().to_string();
+        let path = &dir.join("test_disk_manager.txt").display().to_string();
         let content = "bhjoilkmnkbhaoijsdklmnjkbhiauosdjikbhjoilkmnkbhaoijsdklmnjkbhiauosdjik";
         disk_manager
             .write_disk_all(path, content.as_bytes())
@@ -259,7 +264,7 @@ mod tests {
         let mut disk_manager = DiskManager {};
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_owned();
-        let path = &dir.join("test_disk_manager3.txt").display().to_string();
+        let path = &dir.join("test_disk_manager.txt").display().to_string();
         let content = "bhjoilkmnkbhaoijsdklmnjkbhiauosdjikbhjoilkmnkbhaoijsdklmnjkbhiauosdjik";
         disk_manager
             .write_disk_all(path, content.as_bytes())
@@ -297,7 +302,7 @@ mod tests {
         let mut disk_manager = DiskManager {};
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_owned();
-        let path = &dir.join("test_disk_manager4.txt").display().to_string();
+        let path = &dir.join("test_disk_manager.txt").display().to_string();
         let content = "Hello, world!";
         disk_manager
             .write_disk_all(path, content.as_bytes())

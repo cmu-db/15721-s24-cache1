@@ -1,7 +1,4 @@
 use std::{
-    env,
-    future::ready,
-    io,
     pin::Pin,
     task::{Context, Poll},
     thread,
@@ -10,7 +7,6 @@ use std::{
 
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
-use datafusion::execution::disk_manager;
 use futures::{future::BoxFuture, ready, FutureExt, Stream, StreamExt};
 
 use crate::{
@@ -62,10 +58,6 @@ pub struct MockS3DataStream {
     disk_manager: DiskManager,
 }
 
-// TODO: do we need `disk_manager_helper_functions`? Sometimes we need sync for some simple methods, but async for some complex methods.
-// But we can only get one DiskManager.
-// TODO: do we need to return ParpulseResult<Self>? In mocks3, file_size may be wrong,
-
 impl MockS3DataStream {
     pub fn new(file_paths: Vec<String>, max_buffer_size: usize, disk_manager: DiskManager) -> Self {
         MockS3DataStream {
@@ -101,15 +93,20 @@ impl Stream for MockS3DataStream {
                 }
             }
         } else {
+            // We need to create a new disk_stream since there is no last disk_stream, or it has
+            // been consumed.
             if self.current_key >= self.file_paths.len() {
                 return Poll::Ready(None);
             }
             let file_path = self.file_paths[self.current_key].clone();
+            // TODO: do we need `disk_manager_helper_functions`? Sometimes we need sync for some simple methods, but async for some complex methods.
+            // But we can only get one DiskManager.
             let file_size = self.disk_manager.file_size_sync(&file_path)? as usize;
             let mut buffer_size = self.max_buffer_size;
             if file_size < self.max_buffer_size {
                 buffer_size = file_size;
             }
+            // TODO: change `new_sync` to `new` (async version).
             match DiskReadStream::new_sync(&file_path, buffer_size) {
                 Ok(disk_stream) => {
                     self.current_disk_stream = Some(Box::pin(disk_stream));

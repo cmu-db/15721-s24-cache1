@@ -2,7 +2,6 @@ use std::pin::Pin;
 
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
-use datafusion::physical_plan::streaming::PartitionStream;
 use futures::{stream::BoxStream, Stream};
 
 use crate::{
