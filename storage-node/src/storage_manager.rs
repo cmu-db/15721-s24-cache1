@@ -9,9 +9,7 @@ use crate::{
     cache::{lru::LruCache, CacheValue, ParpulseCache},
     disk::disk_manager_sync::DiskManagerSync,
     error::ParpulseResult,
-    server::RequestParams,
     storage_reader::{s3_diskmock::MockS3Reader, AsyncStorageReader, SyncStorageReader},
-
 };
 
 use storage_common::RequestParams;
