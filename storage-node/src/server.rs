@@ -23,7 +23,8 @@ pub async fn storage_node_serve() -> ParpulseResult<()> {
     let route = warp::path!("file" / String)
         .and(warp::path::end())
         .and_then(|file_name: String| async move {
-            let file_path = format!("storage-node/tests/parquet/{}", file_name);
+            // let file_path = format!("storage-node/tests/parquet/{}", file_name);
+            let file_path = format!("tests/parquet/{}", file_name);
             if !Path::new(&file_path).exists() {
                 return Err(warp::reject::not_found());
             }
@@ -65,6 +66,14 @@ mod tests {
     /// WARNING: Put userdata1.parquet in the storage-node/tests/parquet directory before running this test.
     #[tokio::test]
     async fn test_download_file() -> Result<()> {
+        // Start the server
+        let server_handle = tokio::spawn(async {
+            storage_node_serve().await.unwrap();
+        });
+
+        // Give the server some time to start
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
         let url = "http://localhost:3030/file/userdata1.parquet";
         let client = Client::new();
         let mut response = client.get(url).send().await?;
@@ -88,6 +97,8 @@ mod tests {
         let original_file = fs::read(original_file_path)?;
         let downloaded_file = fs::read(file_path)?;
         assert_eq!(original_file, downloaded_file);
+
+        server_handle.abort();
 
         Ok(())
     }
