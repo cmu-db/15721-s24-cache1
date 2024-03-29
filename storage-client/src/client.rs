@@ -148,32 +148,4 @@ mod tests {
 
         Ok(())
     }
-
-    /// WARNING: Put random_data.csv (can have anything inside) under `data` before
-    /// running this test.
-    /// This test ONLY tests the correctness of the server.
-    /// Do NOT use this test to test the client.
-    #[tokio::test]
-    async fn test_download_file() -> Result<()> {
-        let url = "http://localhost:3030/file/random_data.csv";
-        let client = Client::new();
-        let mut response = client.get(url).send().await?;
-        assert!(
-            response.status().is_success(),
-            "Failed to download file. Status code: {}",
-            response.status()
-        );
-
-        let temp_dir = tempdir()?;
-        let file_path = temp_dir.path().join("random_data.csv");
-        let mut file = File::create(&file_path)?;
-
-        // Stream the response body and write to the file
-        while let Some(chunk) = response.chunk().await? {
-            file.write_all(&chunk)?;
-        }
-        assert!(file_path.exists(), "File not found after download");
-
-        Ok(())
-    }
 }

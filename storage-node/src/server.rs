@@ -22,7 +22,7 @@ pub async fn storage_node_serve() -> ParpulseResult<()> {
     let route = warp::path!("file" / String)
         .and(warp::path::end())
         .and_then(|file_name: String| async move {
-            let file_path = format!("data/{}", file_name);
+            let file_path = format!("storage-node/tests/parquet/{}", file_name);
             if !Path::new(&file_path).exists() {
                 return Err(warp::reject::not_found());
             }
@@ -50,4 +50,45 @@ pub async fn storage_node_serve() -> ParpulseResult<()> {
     warp::serve(route).run(([127, 0, 0, 1], 3030)).await;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::Result;
+    use reqwest::Client;
+    use std::fs::File;
+    use std::io::Write;
+    use tempfile::tempdir;
+
+    /// WARNING: Put userdata1.parquet in the tests/parquet directory before running this test.
+    /// This test ONLY tests the correctness of the server.
+    #[tokio::test]
+    async fn test_download_file() -> Result<()> {
+        let url = "http://localhost:3030/file/userdata1.parquet";
+        let client = Client::new();
+        let mut response = client.get(url).send().await?;
+        assert!(
+            response.status().is_success(),
+            "Failed to download file. Status code: {}",
+            response.status()
+        );
+
+        let temp_dir = tempdir()?;
+        let file_path = temp_dir.path().join("userdata1.parquet");
+        let mut file = File::create(&file_path)?;
+
+        // Stream the response body and write to the file
+        while let Some(chunk) = response.chunk().await? {
+            file.write_all(&chunk)?;
+        }
+        assert!(file_path.exists(), "File not found after download");
+
+        let original_file_path = "tests/parquet/userdata1.parquet";
+        let original_file = fs::read(original_file_path)?;
+        let downloaded_file = fs::read(file_path)?;
+        assert_eq!(original_file, downloaded_file);
+
+        Ok(())
+    }
 }
