@@ -1,7 +1,7 @@
 pub mod client;
 
 use anyhow::Result;
-use arrow::record_batch::RecordBatch;
+use arrow_array::RecordBatch;
 use storage_common::RequestParams;
 use tokio::sync::mpsc::Receiver;
 

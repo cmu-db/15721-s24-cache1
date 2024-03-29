@@ -38,15 +38,15 @@ if __name__ == "__main__":
         print("Usage: python generate_parquet.py [num_rows] [num_cols]")
         sys.exit(1)
     
-    if not os.path.exists("static"):
-        os.makedirs("static")
+    if not os.path.exists("../data/"):
+        os.makedirs("../data")
 
-    filename = os.path.join("static", "random_data.csv")
+    filename = os.path.join("../data", "random_data.csv")
     generate_random_csv(filename, num_rows, num_cols)
     print(f"Random CSV file '{filename}' generated with {num_rows} rows and {num_cols} columns.")
 
     # TODO We can actually specify the number of row groups here
-    parquet_filename = os.path.join("static", "random_data.parquet")
+    parquet_filename = os.path.join("../data", "random_data.parquet")
     df = pd.read_csv(filename)
     fp.write(parquet_filename, df)
     print(f"CSV file converted to Parquet: '{parquet_filename}'")

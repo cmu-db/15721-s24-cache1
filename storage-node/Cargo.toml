@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+arrow-flight = "51.0.0"
 arrow = "50"
 anyhow = "1"
 bytes = "1"
@@ -19,3 +20,4 @@ aws-config = "1"
 aws-smithy-runtime-api = "1"
 async-trait = "0.1"
 storage-common = { path = "../storage-common" }
+warp = "0.3"
