@@ -18,3 +18,4 @@ tempfile = "3.2"
 parquet = { version = "51.0.0", features = ["async"] }
 tokio-stream = "0.1"
 async-std = "1.10"
+arrow = "51.0.0"

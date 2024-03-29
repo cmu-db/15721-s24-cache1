@@ -46,9 +46,9 @@ impl StorageClientImpl {
 #[async_trait::async_trait]
 impl StorageClient for StorageClientImpl {
     async fn get_info_from_catalog(&self, _request: StorageRequest) -> Result<RequestParams> {
-        // TODO: Need to discuss with the catalog team.
+        // FIXME (kunle): Need to discuss with the catalog team.
         // The following line serves as a placeholder for now.
-        Ok(RequestParams::File("random_data.parquet".to_string()))
+        Ok(RequestParams::File("userdata1.parquet".to_string()))
     }
 
     async fn request_data(&self, _request: StorageRequest) -> Result<Receiver<RecordBatch>> {
@@ -69,11 +69,11 @@ impl StorageClient for StorageClientImpl {
         let response = client.get(url).send().await?;
         if response.status().is_success() {
             // Store the streamed Parquet file in a temporary file.
+            // FIXME: 1. Do we really need streaming here?
+            //       2. Do we need to store the file in a temporary file?
             let temp_dir = tempdir()?;
             let file_path = temp_dir.path().join("tmp.parquet");
             let mut file = File::create(&file_path)?;
-
-            // Copy the streamed content to the temporary file
             let mut stream = response.bytes_stream();
             while let Some(chunk) = stream.next().await {
                 let chunk = chunk?;
@@ -82,7 +82,6 @@ impl StorageClient for StorageClientImpl {
 
             // Convert the Parquet file to a record batch.
             let file = AsyncFile::open(file_path).await.unwrap();
-
             let builder = ParquetRecordBatchStreamBuilder::new(file)
                 .await
                 .unwrap()
@@ -117,7 +116,10 @@ impl StorageClient for StorageClientImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow::array::StringArray;
 
+    /// WARNING: This test assumes that the data returned from the server is userdata1.parquet.
+    /// This test validates the correctness of both the client and the server.
     #[tokio::test]
     async fn test_storage_client() -> Result<()> {
         let storage_client =
@@ -128,20 +130,34 @@ mod tests {
         while let Some(record_batch) = receiver.recv().await {
             record_batches.push(record_batch);
         }
-        println!("Record batches: {:?}", record_batches);
         assert!(!record_batches.is_empty());
+
+        let first_batch = &record_batches[0];
+        assert_eq!(first_batch.num_columns(), 13);
+
+        let first_names = StringArray::from(vec!["Amanda", "Albert", "Evelyn"]);
+        let last_names = StringArray::from(vec!["Jordan", "Freeman", "Morgan"]);
+        assert_eq!(
+            first_batch.column(2).as_any().downcast_ref::<StringArray>(),
+            Some(&first_names)
+        );
+        assert_eq!(
+            first_batch.column(3).as_any().downcast_ref::<StringArray>(),
+            Some(&last_names)
+        );
+
         Ok(())
     }
 
-    #[tokio::test]
-    /// Put random_data.csv (can have anything inside) under `data` before
+    /// WARNING: Put random_data.csv (can have anything inside) under `data` before
     /// running this test.
     /// This test ONLY tests the correctness of the server.
+    /// Do NOT use this test to test the client.
+    #[tokio::test]
     async fn test_download_file() -> Result<()> {
         let url = "http://localhost:3030/file/random_data.csv";
         let client = Client::new();
         let mut response = client.get(url).send().await?;
-
         assert!(
             response.status().is_success(),
             "Failed to download file. Status code: {}",
@@ -150,14 +166,12 @@ mod tests {
 
         let temp_dir = tempdir()?;
         let file_path = temp_dir.path().join("random_data.csv");
-
         let mut file = File::create(&file_path)?;
 
         // Stream the response body and write to the file
         while let Some(chunk) = response.chunk().await? {
             file.write_all(&chunk)?;
         }
-
         assert!(file_path.exists(), "File not found after download");
 
         Ok(())

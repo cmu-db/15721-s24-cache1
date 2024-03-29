@@ -21,3 +21,4 @@ aws-smithy-runtime-api = "1"
 async-trait = "0.1"
 storage-common = { path = "../storage-common" }
 warp = "0.3"
+tokio-util = "0.7"
