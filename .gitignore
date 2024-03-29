@@ -17,4 +17,4 @@ Cargo.lock
 
 **/.DS_Store
 
-scripts/static/
+data/
