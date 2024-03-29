@@ -123,7 +123,7 @@ mod tests {
     #[tokio::test]
     async fn test_storage_client() -> Result<()> {
         let storage_client =
-            StorageClientImpl::new("http://localhost:3030", "http://localhost:3031")?;
+            StorageClientImpl::new("http://127.0.0.1:3030", "http://127.0.0.1:3031")?;
         let request = StorageRequest::Table(1);
         let mut receiver = storage_client.request_data(request).await?;
         let mut record_batches = vec![];
