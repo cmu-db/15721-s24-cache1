@@ -2,6 +2,7 @@ use enum_as_inner::EnumAsInner;
 use std::fs;
 use std::path::Path;
 use storage_common::RequestParams;
+use tokio::fs::File as AsyncFile;
 use tokio_util::io::ReaderStream;
 use warp::{Filter, Rejection, Reply};
 
@@ -27,7 +28,7 @@ pub async fn storage_node_serve() -> ParpulseResult<()> {
                 return Err(warp::reject::not_found());
             }
             println!("File Path: {}", file_path);
-            let file = match tokio::fs::File::open(&file_path).await {
+            let file = match AsyncFile::open(&file_path).await {
                 Ok(file) => file,
                 Err(e) => {
                     eprintln!("Error opening file: {}", e);
@@ -61,8 +62,7 @@ mod tests {
     use std::io::Write;
     use tempfile::tempdir;
 
-    /// WARNING: Put userdata1.parquet in the tests/parquet directory before running this test.
-    /// This test ONLY tests the correctness of the server.
+    /// WARNING: Put userdata1.parquet in the storage-node/tests/parquet directory before running this test.
     #[tokio::test]
     async fn test_download_file() -> Result<()> {
         let url = "http://localhost:3030/file/userdata1.parquet";

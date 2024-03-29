@@ -117,13 +117,22 @@ impl StorageClient for StorageClientImpl {
 mod tests {
     use super::*;
     use arrow::array::StringArray;
+    use mockito::Server;
 
-    /// WARNING: This test assumes that the data returned from the server is userdata1.parquet.
-    /// This test validates the correctness of both the client and the server.
+    /// WARNING: Put userdata1.parquet in the storage-node/tests/parquet directory before running this test.
     #[tokio::test]
-    async fn test_storage_client() -> Result<()> {
-        let storage_client =
-            StorageClientImpl::new("http://127.0.0.1:3030", "http://127.0.0.1:3031")?;
+    async fn test_storage_client_wo_ee_catalog() -> Result<()> {
+        let mut server = Server::new_async().await;
+        println!("server host: {}", server.host_with_port());
+        server
+            .mock("GET", "/file/userdata1.parquet")
+            .with_body_from_file("../storage-node/tests/parquet/userdata1.parquet")
+            .create_async()
+            .await;
+
+        let server_endpoint = server.url() + "/";
+        // The catalog endpoint is not used anyway. So randomly pass a url.
+        let storage_client = StorageClientImpl::new(&server_endpoint, "localhost:3031")?;
         let request = StorageRequest::Table(1);
         let mut receiver = storage_client.request_data(request).await?;
         let mut record_batches = vec![];
@@ -148,4 +157,35 @@ mod tests {
 
         Ok(())
     }
+
+    // /// WARNING: This test assumes that the data returned from the server is userdata1.parquet.
+    // /// This test validates the correctness of both the client and the server.
+    // #[tokio::test]
+    // async fn test_storage_client() -> Result<()> {
+    //     let storage_client =
+    //         StorageClientImpl::new("http://127.0.0.1:3030", "http://127.0.0.1:3031")?;
+    //     let request = StorageRequest::Table(1);
+    //     let mut receiver = storage_client.request_data(request).await?;
+    //     let mut record_batches = vec![];
+    //     while let Some(record_batch) = receiver.recv().await {
+    //         record_batches.push(record_batch);
+    //     }
+    //     assert!(!record_batches.is_empty());
+
+    //     let first_batch = &record_batches[0];
+    //     assert_eq!(first_batch.num_columns(), 13);
+
+    //     let first_names = StringArray::from(vec!["Amanda", "Albert", "Evelyn"]);
+    //     let last_names = StringArray::from(vec!["Jordan", "Freeman", "Morgan"]);
+    //     assert_eq!(
+    //         first_batch.column(2).as_any().downcast_ref::<StringArray>(),
+    //         Some(&first_names)
+    //     );
+    //     assert_eq!(
+    //         first_batch.column(3).as_any().downcast_ref::<StringArray>(),
+    //         Some(&last_names)
+    //     );
+
+    //     Ok(())
+    // }
 }
