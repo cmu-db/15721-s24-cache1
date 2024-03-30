@@ -309,7 +309,7 @@ mod tests {
         disk_manager
             .write_disk_all(path, content.as_bytes())
             .expect("write_disk_all failed");
-        let stream = RandomDiskReadStream::new(&path, 1, 2).unwrap().boxed();
+        let stream = RandomDiskReadStream::new(path, 1, 2).unwrap().boxed();
         let output_path = &dir
             .join("test_disk_manager3_output.txt")
             .display()
