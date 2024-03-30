@@ -1,20 +1,20 @@
 use hashlink::linked_hash_map;
 use hashlink::LinkedHashMap;
 
-use super::CacheKey;
-use super::CacheValue;
-use super::{ParpulseCache, ParpulseCacheKey, ParpulseCacheValue};
+use super::DataStoreCacheKey;
+use super::DataStoreCacheValue;
+use super::{DataStoreCache, ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue};
 
 /// [`LruCache`] adopts the least-recently-used algorithm to cache sized
 /// objects. The cache will start evicting if a new object comes that makes
 /// the cache's size exceeds its max capacity, from the oldest to the newest.
-pub struct LruCache<K: CacheKey, V: CacheValue> {
+pub struct LruCache<K: DataStoreCacheKey, V: DataStoreCacheValue> {
     cache_map: LinkedHashMap<K, V>,
     max_capacity: usize,
     size: usize,
 }
 
-impl<K: CacheKey, V: CacheValue> LruCache<K, V> {
+impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruCache<K, V> {
     pub fn new(max_capacity: usize) -> LruCache<K, V> {
         LruCache {
             cache_map: LinkedHashMap::new(),
@@ -68,16 +68,16 @@ impl<K: CacheKey, V: CacheValue> LruCache<K, V> {
     }
 }
 
-impl ParpulseCache for LruCache<ParpulseCacheKey, ParpulseCacheValue> {
-    fn get(&mut self, key: &ParpulseCacheKey) -> Option<&ParpulseCacheValue> {
+impl DataStoreCache for LruCache<ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue> {
+    fn get(&mut self, key: &ParpulseDataStoreCacheKey) -> Option<&ParpulseDataStoreCacheValue> {
         self.get_value(key)
     }
 
-    fn put(&mut self, key: ParpulseCacheKey, value: ParpulseCacheValue) -> bool {
+    fn put(&mut self, key: ParpulseDataStoreCacheKey, value: ParpulseDataStoreCacheValue) -> bool {
         self.put_value(key, value)
     }
 
-    fn peek(&self, key: &ParpulseCacheKey) -> Option<&ParpulseCacheValue> {
+    fn peek(&self, key: &ParpulseDataStoreCacheKey) -> Option<&ParpulseDataStoreCacheValue> {
         self.peek_value(key)
     }
 
@@ -109,18 +109,18 @@ impl ParpulseCache for LruCache<ParpulseCacheKey, ParpulseCacheValue> {
 
 #[cfg(test)]
 mod tests {
-    use super::{LruCache, ParpulseCache, ParpulseCacheKey, ParpulseCacheValue};
+    use super::{DataStoreCache, LruCache, ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue};
 
     #[test]
     fn test_new() {
-        let cache = LruCache::<ParpulseCacheKey, ParpulseCacheValue>::new(10);
+        let cache = LruCache::<ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue>::new(10);
         assert_eq!(cache.max_capacity(), 10);
         assert_eq!(cache.size(), 0);
     }
 
     #[test]
     fn test_peek_and_set() {
-        let mut cache = LruCache::<ParpulseCacheKey, ParpulseCacheValue>::new(10);
+        let mut cache = LruCache::<ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue>::new(10);
         cache.put("key1".to_string(), ("value1".to_string(), 1));
         cache.put("key2".to_string(), ("value2".to_string(), 2));
         cache.put("key3".to_string(), ("value3".to_string(), 3));
@@ -148,7 +148,7 @@ mod tests {
 
     #[test]
     fn test_put_different_keys() {
-        let mut cache = LruCache::<ParpulseCacheKey, ParpulseCacheValue>::new(10);
+        let mut cache = LruCache::<ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue>::new(10);
         cache.put("key1".to_string(), ("value1".to_string(), 1));
         assert_eq!(cache.size(), 1);
         cache.put("key2".to_string(), ("value2".to_string(), 2));
@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn test_put_same_key() {
-        let mut cache = LruCache::<ParpulseCacheKey, ParpulseCacheValue>::new(10);
+        let mut cache = LruCache::<ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue>::new(10);
         cache.put("key1".to_string(), ("value1".to_string(), 1));
         cache.put("key1".to_string(), ("value2".to_string(), 2));
         cache.put("key1".to_string(), ("value3".to_string(), 3));

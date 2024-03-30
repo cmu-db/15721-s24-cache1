@@ -1,19 +1,19 @@
-use bytes::{Bytes, BytesMut};
-use futures::stream::BoxStream;
+use bytes::Bytes;
 use futures::stream::StreamExt;
-use futures::{FutureExt, Stream};
-use std::borrow::BorrowMut;
+
 use std::io::SeekFrom;
-use std::ops::DerefMut;
+
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::task::{Context, Poll};
+
 use tokio::fs::{self, File, OpenOptions};
 use tokio::io::AsyncSeekExt;
-use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
 
 use crate::error::ParpulseResult;
-use crate::storage_manager::ParpulseReaderStream;
+use crate::storage_reader::StorageReaderStream;
+
+use super::stream::DiskReadStream;
 
 /// [`DiskManager`] is responsible for reading and writing data to disk. The default
 /// version is async. We keep this struct to add lock.
@@ -39,7 +39,7 @@ impl DiskManager {
         Ok(options.open(&path_buf).await?)
     }
 
-    pub async fn write_disk_all(&mut self, path: &str, content: &[u8]) -> ParpulseResult<()> {
+    pub async fn write_disk_all(&self, path: &str, content: &[u8]) -> ParpulseResult<()> {
         let mut file = self.open_or_create(path, false).await?;
         file.write_all(content).await?;
         Ok(file.flush().await?)
@@ -83,14 +83,11 @@ impl DiskManager {
     // One way is using `write commit` to handle read-write conflict, then there is no w-w conflict.
     // TODO: we should write to disk & network at the same time. Maybe we can implement another `AsyncWriter`
     // have method of `poll_write`, then we don't need to put this logic in the `disk_manager`.
-    pub async fn write_reader_to_disk<T>(
-        &mut self,
-        mut stream: Pin<Box<T>>,
+    pub async fn write_stream_reader_to_disk(
+        &self,
+        mut stream: StorageReaderStream,
         disk_path: &str,
-    ) -> ParpulseResult<usize>
-    where
-        T: ParpulseReaderStream,
-    {
+    ) -> ParpulseResult<usize> {
         if Path::new(disk_path).exists() {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
@@ -102,10 +99,9 @@ impl DiskManager {
         let mut bytes_written = 0;
         loop {
             match stream.next().await {
-                Some(Ok(bytes_read)) => {
-                    let buffer = stream.buffer();
-                    file.write_all(&buffer[..bytes_read]).await?;
-                    bytes_written += bytes_read;
+                Some(Ok(bytes)) => {
+                    file.write_all(&bytes).await?;
+                    bytes_written += bytes.len();
                 }
                 Some(Err(e)) => return Err(e),
                 None => break,
@@ -126,72 +122,19 @@ impl DiskManager {
         Ok(metadata.len())
     }
 
-    pub async fn remove_file(&mut self, path: &str) -> ParpulseResult<()> {
+    pub async fn remove_file(&self, path: &str) -> ParpulseResult<()> {
         Ok(fs::remove_file(path).await?)
-    }
-}
-
-pub struct DiskReadStream {
-    f: File,
-    pub buffer: BytesMut,
-}
-
-impl DiskReadStream {
-    pub fn new_sync(file_path: &str, buffer_size: usize) -> ParpulseResult<Self> {
-        let f: std::fs::File = std::fs::File::open(file_path)?;
-
-        Ok(DiskReadStream {
-            f: File::from_std(f),
-            buffer: BytesMut::zeroed(buffer_size),
-        })
-    }
-
-    pub async fn new(file_path: &str, buffer_size: usize) -> ParpulseResult<Self> {
-        let f = File::open(file_path).await?;
-
-        Ok(DiskReadStream {
-            f,
-            buffer: BytesMut::zeroed(buffer_size),
-        })
-    }
-}
-
-impl ParpulseReaderStream for DiskReadStream {
-    fn buffer(&self) -> &[u8] {
-        &self.buffer
-    }
-}
-
-impl Stream for DiskReadStream {
-    type Item = ParpulseResult<usize>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        let deref_self = self.deref_mut();
-        match deref_self
-            .f
-            .read(deref_self.buffer.as_mut())
-            .boxed()
-            .poll_unpin(cx)
-        {
-            Poll::Ready(Ok(bytes_read)) => {
-                if bytes_read > 0 {
-                    Poll::Ready(Some(Ok(bytes_read)))
-                } else {
-                    Poll::Ready(None)
-                }
-            }
-            Poll::Ready(Err(e)) => Poll::Ready(Some(Err(e.into()))),
-            Poll::Pending => Poll::Pending,
-        }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::disk::stream::RandomDiskReadStream;
+
     use super::*;
     #[tokio::test]
     async fn test_simple_write_read() {
-        let mut disk_manager = DiskManager {};
+        let disk_manager = DiskManager {};
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_owned();
         let path = &dir.join("test_disk_manager1.txt").display().to_string();
@@ -232,7 +175,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_iterator_read() {
-        let mut disk_manager = DiskManager {};
+        let disk_manager = DiskManager {};
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_owned();
         let path = &dir.join("test_disk_manager2.txt").display().to_string();
@@ -267,7 +210,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_reader_to_disk() {
-        let mut disk_manager = DiskManager {};
+        let disk_manager = DiskManager {};
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_owned();
         let path = &dir.join("test_disk_manager3.txt").display().to_string();
@@ -276,16 +219,13 @@ mod tests {
             .write_disk_all(path, content.as_bytes())
             .await
             .expect("write_disk_all failed");
-        let mut stream = disk_manager
-            .disk_read_stream(path, 1)
-            .await
-            .expect("disk_read_iterator failed");
+        let stream = RandomDiskReadStream::new(&path, 1, 2).unwrap().boxed();
         let output_path = &dir
             .join("test_disk_manager3_output.txt")
             .display()
             .to_string();
         let bytes_written = disk_manager
-            .write_reader_to_disk::<DiskReadStream>(stream, output_path)
+            .write_stream_reader_to_disk(stream, output_path)
             .await
             .expect("write_reader_to_disk failed");
         assert_eq!(bytes_written, content.len());
@@ -305,7 +245,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_file() {
-        let mut disk_manager = DiskManager {};
+        let disk_manager = DiskManager {};
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_owned();
         let path = &dir.join("test_disk_manager4.txt").display().to_string();

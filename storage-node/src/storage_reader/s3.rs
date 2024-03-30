@@ -1,5 +1,4 @@
 use std::{
-    error::Error,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -8,21 +7,16 @@ use async_trait::async_trait;
 use aws_config::{meta::region::RegionProviderChain, BehaviorVersion};
 use aws_sdk_s3::{
     operation::get_object::{GetObjectError, GetObjectOutput},
-    primitives::{AggregatedBytes, ByteStreamError},
+    primitives::ByteStream,
     Client,
 };
 use aws_smithy_runtime_api::{client::result::SdkError, http::Response};
-use bytes::{Buf, Bytes, BytesMut};
-use futures::{future::BoxFuture, ready, Future, FutureExt, Stream};
+use bytes::{Bytes, BytesMut};
+use futures::{future::BoxFuture, ready, FutureExt, Stream};
 
-use crate::{
-    error::{ParpulseError, ParpulseResult},
-    storage_manager::ParpulseReaderStream,
-};
+use crate::error::{ParpulseError, ParpulseResult};
 
-use super::AsyncStorageReader;
-
-const DEFAULT_CHUNK_SIZE: usize = 1024;
+use super::{AsyncStorageReader, StorageReaderStream};
 
 /// [`S3Reader`] is a reader for retrieving data from S3. It can either read the
 /// data once at all or read the data in an asynchronous stream.
@@ -59,17 +53,14 @@ pub struct S3DataStream {
     bucket: String,
     keys: Vec<String>,
     current_key: usize,
-    buffer_inner: BytesMut,
-    chunk_size: usize,
-    buffer: BytesMut,
 
     object_fut:
         Option<BoxFuture<'static, Result<GetObjectOutput, SdkError<GetObjectError, Response>>>>,
-    data_fut: Option<BoxFuture<'static, Result<AggregatedBytes, ByteStreamError>>>,
+    object_body: Option<ByteStream>,
 }
 
 impl S3DataStream {
-    pub fn new(client: Client, bucket: String, keys: Vec<String>, chunk_size: usize) -> Self {
+    pub fn new(client: Client, bucket: String, keys: Vec<String>) -> Self {
         assert!(!keys.is_empty(), "keys should not be empty");
         let fut = client
             .get_object()
@@ -82,63 +73,44 @@ impl S3DataStream {
             bucket,
             keys,
             current_key: 0,
-            buffer_inner: BytesMut::new(),
-            chunk_size,
             object_fut: Some(fut),
-            data_fut: None,
-            buffer: BytesMut::new(),
+            object_body: None,
         }
     }
 }
 
 impl Stream for S3DataStream {
-    type Item = ParpulseResult<usize>;
+    type Item = ParpulseResult<Bytes>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         if let Some(object_fut) = self.object_fut.as_mut() {
             match ready!(object_fut.poll_unpin(cx)) {
                 Ok(object) => {
                     self.object_fut.take();
-                    let fut = object.body.collect().boxed();
-                    self.data_fut = Some(fut);
+                    self.object_body = Some(object.body);
                     self.poll_next(cx)
                 }
                 Err(e) => Poll::Ready(Some(Err(ParpulseError::from(e)))),
             }
-        } else if let Some(data_fut) = self.data_fut.as_mut() {
-            match ready!(data_fut.poll_unpin(cx)) {
-                Ok(bytes) => {
-                    self.data_fut.take();
-                    // TODO: extend is real `copy`, expensive! Can we directly turn AggregateBytes to BytesMut?
-                    let data = bytes.into_bytes();
-                    // TODO: If we don't need chunksize (since it will cause more frequent disk I/O), we can
-                    // add `self.chunksize = bytes.into_bytes().len()` here, and don't forget to modify tests!
-                    // We keep chunksize for now, so we can benchmark w/o it in the future.
-                    // self.chunk_size = data.len();
-                    self.buffer_inner.extend(data);
-                    self.poll_next(cx)
-                }
-                Err(e) => Poll::Ready(Some(Err(ParpulseError::from(e)))),
+        } else if let Some(object_body) = self.object_body.as_mut() {
+            let poll_result = object_body.try_next().boxed().poll_unpin(cx);
+            match poll_result {
+                Poll::Ready(ready_result) => match ready_result {
+                    Ok(Some(bytes)) => Poll::Ready(Some(Ok(bytes))),
+                    Ok(None) => {
+                        self.object_body = None;
+                        self.poll_next(cx)
+                    }
+                    Err(e) => Poll::Ready(Some(Err(ParpulseError::from(e)))),
+                },
+                Poll::Pending => Poll::Pending,
             }
-        } else if self.buffer_inner.remaining() >= self.chunk_size {
-            // There are enough data to consume in the buffer. Return the data directly.
-            let chunk_size = self.chunk_size;
-            self.buffer = self.buffer_inner.split_to(chunk_size);
-            Poll::Ready(Some(Ok(chunk_size)))
         } else {
-            // The size of the remaining data is less than the chunk size.
             if self.current_key + 1 >= self.keys.len() {
-                if self.buffer_inner.is_empty() {
-                    // No more data. Return None.
-                    Poll::Ready(None)
-                } else {
-                    // No more data in S3. Just return the remaining data.
-                    let remaining_len = self.buffer_inner.len();
-                    self.buffer = self.buffer_inner.split_to(remaining_len);
-                    Poll::Ready(Some(Ok(remaining_len)))
-                }
+                // No more data to read in S3.
+                Poll::Ready(None)
             } else {
-                // There are more data in S3. Fetch the next object.
+                // There are more files to read in S3. Fetch the next object.
                 self.current_key += 1;
                 let fut = self
                     .client
@@ -154,16 +126,8 @@ impl Stream for S3DataStream {
     }
 }
 
-impl ParpulseReaderStream for S3DataStream {
-    fn buffer(&self) -> &[u8] {
-        &self.buffer
-    }
-}
-
 #[async_trait]
 impl AsyncStorageReader for S3Reader {
-    type ReaderStream = S3DataStream;
-
     /// NEVER call this method if you do not know the size of the data -- collecting
     /// all data into one buffer might lead to OOM.
     async fn read_all(&self) -> ParpulseResult<Bytes> {
@@ -189,22 +153,15 @@ impl AsyncStorageReader for S3Reader {
         Ok(bytes.freeze())
     }
 
-    async fn into_stream(self) -> ParpulseResult<Pin<Box<Self::ReaderStream>>> {
-        let s3_stream = S3DataStream::new(
-            self.client,
-            self.bucket,
-            self.keys,
-            DEFAULT_CHUNK_SIZE, // TODO: Set buffer size from config
-        );
+    async fn into_stream(self) -> ParpulseResult<StorageReaderStream> {
+        let s3_stream = S3DataStream::new(self.client, self.bucket, self.keys);
         Ok(Box::pin(s3_stream))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::pin::pin;
-
-    use futures::{future::poll_fn, StreamExt};
+    use futures::StreamExt;
 
     use super::*;
 
@@ -213,7 +170,7 @@ mod tests {
     async fn test_s3_read_all() {
         let bucket = "parpulse-test".to_string();
         let keys = vec!["userdata/userdata1.parquet".to_string()];
-        let mut reader = S3Reader::new(bucket, keys).await;
+        let reader = S3Reader::new(bucket, keys).await;
         let bytes = reader.read_all().await.unwrap();
         assert_eq!(bytes.len(), 113629);
     }
@@ -233,15 +190,11 @@ mod tests {
         let reader = S3Reader::new(bucket, keys).await;
         let mut s3_stream = reader.into_stream().await.unwrap();
 
-        let mut streaming_read_count = 0;
         let mut streaming_total_bytes = 0;
-        while let Some(data_len) = s3_stream.next().await {
-            let data_len = data_len.unwrap();
-            streaming_read_count += 1;
-            streaming_total_bytes += data_len;
-            assert_eq!(s3_stream.buffer().len(), data_len);
+        while let Some(data) = s3_stream.next().await {
+            let data = data.unwrap();
+            streaming_total_bytes += data.len();
         }
         assert_eq!(streaming_total_bytes, 565545);
-        assert_eq!(streaming_read_count, 553);
     }
 }

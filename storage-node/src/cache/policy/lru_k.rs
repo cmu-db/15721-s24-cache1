@@ -1,12 +1,11 @@
 /// LRU-K cache implementation.
 /// Credit: https://doi.org/10.1145/170036.170081
-use datafusion::execution::cache;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
-use super::CacheKey;
-use super::CacheValue;
-use super::{ParpulseCache, ParpulseCacheKey, ParpulseCacheValue};
+use super::DataStoreCacheKey;
+use super::DataStoreCacheValue;
+use super::{DataStoreCache, ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue};
 
 type Timestamp = i32;
 
@@ -15,7 +14,7 @@ type Timestamp = i32;
 /// Each node contains a value of type `V` and a history of timestamps.
 /// The history is stored as a `VecDeque<Timestamp>`, where the most recent
 /// timestamps are at the front of the deque.
-struct LruKNode<V: CacheValue> {
+struct LruKNode<V: DataStoreCacheValue> {
     value: V,
     history: VecDeque<Timestamp>,
 }
@@ -29,7 +28,7 @@ struct LruKNode<V: CacheValue> {
 /// have +inf backward k-distance, the cache evicts the node with the earliest
 /// overall timestamp (i.e., the frame whose least-recent recorded access is the
 /// overall least recent access, overall, out of all nodes).
-pub struct LruKCache<K: CacheKey, V: CacheValue> {
+pub struct LruKCache<K: DataStoreCacheKey, V: DataStoreCacheValue> {
     cache_map: HashMap<K, LruKNode<V>>,
     max_capacity: usize,
     size: usize,
@@ -37,7 +36,7 @@ pub struct LruKCache<K: CacheKey, V: CacheValue> {
     k: usize, // The k value for LRU-K
 }
 
-impl<K: CacheKey, V: CacheValue> LruKCache<K, V> {
+impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruKCache<K, V> {
     pub fn new(max_capacity: usize, k: usize) -> LruKCache<K, V> {
         LruKCache {
             cache_map: HashMap::new(),
@@ -51,7 +50,7 @@ impl<K: CacheKey, V: CacheValue> LruKCache<K, V> {
     fn evict(&mut self, new_key: &K) -> Option<K> {
         let mut found = false;
         let mut max_k_dist = 0;
-        let mut k_dist = 0;
+        let mut k_dist;
         let mut earliest_timestamp = 0;
         let mut key_to_evict: Option<K> = None;
         for (key, node) in self.cache_map.iter() {
@@ -154,21 +153,22 @@ impl<K: CacheKey, V: CacheValue> LruKCache<K, V> {
         }
     }
 
+    #[allow(dead_code)]
     fn current_timestamp(&self) -> Timestamp {
         self.curr_timestamp
     }
 }
 
-impl ParpulseCache for LruKCache<ParpulseCacheKey, ParpulseCacheValue> {
-    fn get(&mut self, key: &ParpulseCacheKey) -> Option<&ParpulseCacheValue> {
+impl DataStoreCache for LruKCache<ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue> {
+    fn get(&mut self, key: &ParpulseDataStoreCacheKey) -> Option<&ParpulseDataStoreCacheValue> {
         self.get_value(key)
     }
 
-    fn put(&mut self, key: ParpulseCacheKey, value: ParpulseCacheValue) -> bool {
+    fn put(&mut self, key: ParpulseDataStoreCacheKey, value: ParpulseDataStoreCacheValue) -> bool {
         self.put_value(key, value)
     }
 
-    fn peek(&self, key: &ParpulseCacheKey) -> Option<&ParpulseCacheValue> {
+    fn peek(&self, key: &ParpulseDataStoreCacheKey) -> Option<&ParpulseDataStoreCacheValue> {
         self.peek_value(key)
     }
 
@@ -200,11 +200,14 @@ impl ParpulseCache for LruKCache<ParpulseCacheKey, ParpulseCacheValue> {
 
 #[cfg(test)]
 mod tests {
-    use super::{LruKCache, ParpulseCache, ParpulseCacheKey, ParpulseCacheValue};
+    use super::{
+        DataStoreCache, LruKCache, ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue,
+    };
 
     #[test]
     fn test_new() {
-        let mut cache = LruKCache::<ParpulseCacheKey, ParpulseCacheValue>::new(10, 2);
+        let mut cache =
+            LruKCache::<ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue>::new(10, 2);
         assert_eq!(cache.max_capacity(), 10);
         assert_eq!(cache.size(), 0);
         cache.set_max_capacity(20);
@@ -213,7 +216,8 @@ mod tests {
 
     #[test]
     fn test_peek_and_set() {
-        let mut cache = LruKCache::<ParpulseCacheKey, ParpulseCacheValue>::new(10, 2);
+        let mut cache =
+            LruKCache::<ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue>::new(10, 2);
         let key = "key1".to_string();
         let value = "value1".to_string();
         assert_eq!(cache.peek(&key), None);
@@ -228,7 +232,8 @@ mod tests {
 
     #[test]
     fn test_evict() {
-        let mut cache = LruKCache::<ParpulseCacheKey, ParpulseCacheValue>::new(13, 2);
+        let mut cache =
+            LruKCache::<ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue>::new(13, 2);
         let key1 = "key1".to_string();
         let key2 = "key2".to_string();
         let key3 = "key3".to_string();
@@ -265,7 +270,8 @@ mod tests {
 
     #[test]
     fn test_infinite() {
-        let mut cache = LruKCache::<ParpulseCacheKey, ParpulseCacheValue>::new(6, 2);
+        let mut cache =
+            LruKCache::<ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue>::new(6, 2);
         let key1 = "key1".to_string();
         let key2 = "key2".to_string();
         let key3 = "key3".to_string();
