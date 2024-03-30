@@ -56,8 +56,6 @@ impl DataStore for DiskStore {
 
     async fn write_data(&self, key: String, data: StorageReaderStream) -> ParpulseResult<usize> {
         // TODO: Shall we spawn a task to write the data to disk?
-        // let data_stream = ReceiverStream::new(data);
-        // let writer_stream = DiskWriterReceiverStream::new(data_stream).boxed();
         let bytes_written = self
             .disk_manager
             .write_stream_reader_to_disk(data, &key)
