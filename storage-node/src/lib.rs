@@ -1,5 +1,3 @@
-// TODO: Remove these annotations after implementation.
-#![allow(unused)]
 #![allow(clippy::new_without_default)]
 
 pub mod cache;
