@@ -79,10 +79,11 @@ impl DiskManager {
     }
 
     // FIXME: disk_path should not exist, otherwise throw an error
-    // TODO: we must handle write-write conflict correctly in the furture.
+    // TODO(lanlou): we must handle write-write conflict correctly in the furture.
     // One way is using `write commit` to handle read-write conflict, then there is no w-w conflict.
-    // TODO: we should write to disk & network at the same time. Maybe we can implement another `AsyncWriter`
-    // have method of `poll_write`, then we don't need to put this logic in the `disk_manager`.
+    // TODO(lanlou): We need to write data to disk & send data to network at the same time.
+    // TOOD(lanlou): Now S3 stream returns small amount of data each time, so it would be expensive
+    // in the current implementation since one disk I/O one S3 stream next (too many disk I/O!)
     pub async fn write_stream_reader_to_disk(
         &self,
         mut stream: StorageReaderStream,
