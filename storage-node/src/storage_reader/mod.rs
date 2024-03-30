@@ -16,6 +16,8 @@ pub trait SyncStorageReader {
     fn into_iterator(self) -> ParpulseResult<Self::ReaderIterator>;
 }
 
+/// [`StorageReaderStream`] is a stream of data read from the underlying storage.
+/// Each storage reader should implement `Stream` trait to provide a stream of data.
 pub type StorageReaderStream = BoxStream<'static, ParpulseResult<Bytes>>;
 
 // TODO: Merge `StorageReader` with `AsyncStorageReader`.

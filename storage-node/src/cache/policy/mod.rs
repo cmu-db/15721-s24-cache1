@@ -3,10 +3,12 @@ pub mod lru_k;
 use std::fmt::Debug;
 use std::hash::Hash;
 
-/// [`DataStoreCacheKey`] is the key type for different caches in the system.
+/// [`DataStoreCacheKey`] is the key type for data store caches using different
+/// cache policies in the system.
 pub trait DataStoreCacheKey: Hash + Eq + Clone + Debug {}
 impl<T: Hash + Eq + Clone + Debug> DataStoreCacheKey for T {}
-/// [`DataStoreCacheValue`] is the value type for different caches in the system.
+/// [`DataStoreCacheValue`] is the value type for data store caches using different
+/// cache policies in the system.
 /// It might represent a logical object and we can get the actual size for this
 /// logical object by calling `size()`.
 pub trait DataStoreCacheValue {
@@ -40,6 +42,14 @@ impl DataStoreCacheValue for ParpulseDataStoreCacheValue {
     }
 }
 
+/// [`DataStoreCache`] records objects' locations in the data store. For example, we cache
+/// the contents of s3's remote object `userdata.parquet` in the local disk. Then we may
+/// store the local file system path of `userdata.parquet` in `DataStoreCache`. By querying
+/// `DataStoreCache`, we can get the local file system path of `userdata.parquet` and read the
+/// contents from the local disk.
+///
+/// There are different cache policies for the data store cache, such as LRU, LRU-K, etc. See
+/// other files in this module for more details.
 pub trait DataStoreCache {
     /// Gets a value from the cache. Might has side effect on the cache (e.g.
     /// modifying some bookkeeping fields in the cache).

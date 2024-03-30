@@ -12,8 +12,10 @@ use super::DataStore;
 const DEFAULT_DISK_READER_BUFFER_SIZE: usize = 8192;
 const DEFAULT_CHANNEL_BUFFER_SIZE: usize = 1024;
 
+/// [`DiskStore`] stores the contents of remote objects on the local disk.
 pub struct DiskStore {
     disk_manager: DiskManager,
+    /// The path to the directory where the data is stored on the disk.
     base_path: String,
 }
 
@@ -55,7 +57,7 @@ impl DataStore for DiskStore {
     }
 
     async fn write_data(&self, key: String, data: StorageReaderStream) -> ParpulseResult<usize> {
-        // TODO: Shall we spawn a task to write the data to disk?
+        // NOTE(Yuanxin): Shall we spawn a task to write the data to disk?
         let bytes_written = self
             .disk_manager
             .write_stream_reader_to_disk(data, &key)
