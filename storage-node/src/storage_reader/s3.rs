@@ -48,7 +48,7 @@ impl S3Reader {
 ///
 /// If we want to use fixed buffer for benchmark, we can add self.last_read_size and
 /// self.current_buffer_pos.
-pub struct S3DataStream {
+pub struct S3ReaderStream {
     client: Client,
     bucket: String,
     keys: Vec<String>,
@@ -59,7 +59,7 @@ pub struct S3DataStream {
     object_body: Option<ByteStream>,
 }
 
-impl S3DataStream {
+impl S3ReaderStream {
     pub fn new(client: Client, bucket: String, keys: Vec<String>) -> Self {
         assert!(!keys.is_empty(), "keys should not be empty");
         let fut = client
@@ -79,7 +79,7 @@ impl S3DataStream {
     }
 }
 
-impl Stream for S3DataStream {
+impl Stream for S3ReaderStream {
     type Item = ParpulseResult<Bytes>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
@@ -105,23 +105,21 @@ impl Stream for S3DataStream {
                 },
                 Poll::Pending => Poll::Pending,
             }
+        } else if self.current_key + 1 >= self.keys.len() {
+            // No more data to read in S3.
+            Poll::Ready(None)
         } else {
-            if self.current_key + 1 >= self.keys.len() {
-                // No more data to read in S3.
-                Poll::Ready(None)
-            } else {
-                // There are more files to read in S3. Fetch the next object.
-                self.current_key += 1;
-                let fut = self
-                    .client
-                    .get_object()
-                    .bucket(&self.bucket)
-                    .key(&self.keys[self.current_key])
-                    .send()
-                    .boxed();
-                self.object_fut = Some(fut);
-                self.poll_next(cx)
-            }
+            // There are more files to read in S3. Fetch the next object.
+            self.current_key += 1;
+            let fut = self
+                .client
+                .get_object()
+                .bucket(&self.bucket)
+                .key(&self.keys[self.current_key])
+                .send()
+                .boxed();
+            self.object_fut = Some(fut);
+            self.poll_next(cx)
         }
     }
 }
@@ -154,7 +152,7 @@ impl AsyncStorageReader for S3Reader {
     }
 
     async fn into_stream(self) -> ParpulseResult<StorageReaderStream> {
-        let s3_stream = S3DataStream::new(self.client, self.bucket, self.keys);
+        let s3_stream = S3ReaderStream::new(self.client, self.bucket, self.keys);
         Ok(Box::pin(s3_stream))
     }
 }

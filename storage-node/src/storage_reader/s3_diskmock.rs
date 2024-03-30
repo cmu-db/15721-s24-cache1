@@ -44,15 +44,15 @@ impl MockS3Reader {
     }
 }
 
-pub struct MockS3DataStream {
+pub struct MockS3ReaderStream {
     current_disk_stream: Option<Pin<Box<RandomDiskReadStream>>>,
     file_paths: Vec<String>,
     current_key: usize,
 }
 
-impl MockS3DataStream {
+impl MockS3ReaderStream {
     pub fn new(file_paths: Vec<String>) -> Self {
-        MockS3DataStream {
+        MockS3ReaderStream {
             current_disk_stream: None,
             file_paths,
             current_key: 0,
@@ -60,7 +60,7 @@ impl MockS3DataStream {
     }
 }
 
-impl Stream for MockS3DataStream {
+impl Stream for MockS3ReaderStream {
     type Item = ParpulseResult<Bytes>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
@@ -109,7 +109,7 @@ impl AsyncStorageReader for MockS3Reader {
     }
 
     async fn into_stream(self) -> ParpulseResult<StorageReaderStream> {
-        Ok(Box::pin(MockS3DataStream::new(self.file_paths)))
+        Ok(Box::pin(MockS3ReaderStream::new(self.file_paths)))
     }
 }
 

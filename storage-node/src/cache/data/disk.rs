@@ -37,7 +37,7 @@ impl DataStore for DiskStore {
         // FIXME: Shall we consider the situation where the data is not found?
         let mut disk_stream = self
             .disk_manager
-            .disk_read_stream(&key, DEFAULT_DISK_READER_BUFFER_SIZE)
+            .disk_read_stream(key, DEFAULT_DISK_READER_BUFFER_SIZE)
             .await?;
         let (tx, rx) = tokio::sync::mpsc::channel(DEFAULT_CHANNEL_BUFFER_SIZE);
         tokio::spawn(async move {
@@ -66,7 +66,7 @@ impl DataStore for DiskStore {
     }
 
     async fn clean_data(&self, key: &str) -> ParpulseResult<()> {
-        self.disk_manager.remove_file(&key).await
+        self.disk_manager.remove_file(key).await
     }
 
     fn data_store_key(&self, remote_location: &str) -> String {
