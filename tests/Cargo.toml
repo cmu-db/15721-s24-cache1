@@ -1,0 +1,12 @@
+[package]
+name = "tests"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+storage-node = { path = "../storage-node" }
+storage-client = { path = "../storage-client" }
+storage-common = { path = "../storage-common" }
+anyhow = "1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+arrow = "51.0.0"

@@ -2,7 +2,6 @@ pub mod client;
 
 use anyhow::Result;
 use arrow_array::RecordBatch;
-use storage_common::RequestParams;
 use tokio::sync::mpsc::Receiver;
 
 /// Id types for table, column, and record. Need to be consistent among all components
@@ -33,12 +32,10 @@ pub enum StorageRequest {
 /// underlying storage.
 #[async_trait::async_trait]
 pub trait StorageClient: Send + Sync + 'static {
-    /// Returns the physical location of the requested data in RequestParams.
-    async fn get_info_from_catalog(&self, request: StorageRequest) -> Result<RequestParams>;
-
     /// Returns the requested data as a stream.
     async fn request_data(&self, request: StorageRequest) -> Result<Receiver<RecordBatch>>;
 
     /// Returns all the requested data as a whole.
+    #[cfg(feature = "ignore")]
     async fn request_data_sync(&self, request: StorageRequest) -> Result<Vec<RecordBatch>>;
 }

@@ -14,6 +14,10 @@ use tokio::sync::mpsc::{channel, Receiver};
 
 use crate::{StorageClient, StorageRequest};
 
+/// The batch size for the record batch.
+const BATCH_SIZE: usize = 3;
+const CHANNEL_CAPACITY: usize = 1;
+
 pub struct StorageClientImpl {
     _storage_server_endpoint: Uri,
     _catalog_server_endpoint: Uri,
@@ -41,16 +45,17 @@ impl StorageClientImpl {
             _catalog_server_endpoint: catalog_server_endpoint,
         })
     }
-}
 
-#[async_trait::async_trait]
-impl StorageClient for StorageClientImpl {
+    /// Returns the physical location of the requested data in RequestParams.
     async fn get_info_from_catalog(&self, _request: StorageRequest) -> Result<RequestParams> {
         // FIXME (kunle): Need to discuss with the catalog team.
         // The following line serves as a placeholder for now.
         Ok(RequestParams::File("userdata1.parquet".to_string()))
     }
+}
 
+#[async_trait::async_trait]
+impl StorageClient for StorageClientImpl {
     async fn request_data(&self, _request: StorageRequest) -> Result<Receiver<RecordBatch>> {
         // First we need to get the location of the parquet file from the catalog server.
         let _location = match self.get_info_from_catalog(_request).await? {
@@ -85,14 +90,14 @@ impl StorageClient for StorageClientImpl {
             let builder = ParquetRecordBatchStreamBuilder::new(file)
                 .await
                 .unwrap()
-                .with_batch_size(3);
+                .with_batch_size(BATCH_SIZE);
 
             let mask = ProjectionMask::all();
             let stream = builder.with_projection(mask).build().unwrap();
             let results = stream.try_collect::<Vec<_>>().await.unwrap();
 
             // Return the record batch as a stream.
-            let (tx, rx) = channel(1);
+            let (tx, rx) = channel(CHANNEL_CAPACITY);
             tokio::spawn(async move {
                 for result in results {
                     tx.send(result).await.unwrap();
@@ -108,6 +113,7 @@ impl StorageClient for StorageClientImpl {
     }
 
     // TODO (kunle): I don't think this function is necessary.
+    #[cfg(feature = "ignore")]
     async fn request_data_sync(&self, _request: StorageRequest) -> Result<Vec<RecordBatch>> {
         todo!()
     }
@@ -122,6 +128,7 @@ mod tests {
     /// WARNING: Put userdata1.parquet in the storage-node/tests/parquet directory before running this test.
     #[tokio::test]
     async fn test_storage_client_wo_ee_catalog() -> Result<()> {
+        // Create a mock server to serve the parquet file.
         let mut server = Server::new_async().await;
         println!("server host: {}", server.host_with_port());
         server
@@ -157,35 +164,4 @@ mod tests {
 
         Ok(())
     }
-
-    // /// WARNING: This test assumes that the data returned from the server is userdata1.parquet.
-    // /// This test validates the correctness of both the client and the server.
-    // #[tokio::test]
-    // async fn test_storage_client() -> Result<()> {
-    //     let storage_client =
-    //         StorageClientImpl::new("http://127.0.0.1:3030", "http://127.0.0.1:3031")?;
-    //     let request = StorageRequest::Table(1);
-    //     let mut receiver = storage_client.request_data(request).await?;
-    //     let mut record_batches = vec![];
-    //     while let Some(record_batch) = receiver.recv().await {
-    //         record_batches.push(record_batch);
-    //     }
-    //     assert!(!record_batches.is_empty());
-
-    //     let first_batch = &record_batches[0];
-    //     assert_eq!(first_batch.num_columns(), 13);
-
-    //     let first_names = StringArray::from(vec!["Amanda", "Albert", "Evelyn"]);
-    //     let last_names = StringArray::from(vec!["Jordan", "Freeman", "Morgan"]);
-    //     assert_eq!(
-    //         first_batch.column(2).as_any().downcast_ref::<StringArray>(),
-    //         Some(&first_names)
-    //     );
-    //     assert_eq!(
-    //         first_batch.column(3).as_any().downcast_ref::<StringArray>(),
-    //         Some(&last_names)
-    //     );
-
-    //     Ok(())
-    // }
 }

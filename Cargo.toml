@@ -1,7 +1,4 @@
 [workspace]
-members = [
-    "storage-node",
-    "storage-client"
-]
+members = ["storage-node", "storage-client", "tests"]
 
 resolver = "2"
