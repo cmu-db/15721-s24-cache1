@@ -19,9 +19,14 @@ pub struct DiskStore {
 
 impl DiskStore {
     pub fn new(disk_manager: DiskManager, base_path: String) -> Self {
+        let mut final_base_path = base_path;
+        if !final_base_path.ends_with('/') {
+            final_base_path += "/";
+        }
+
         Self {
             disk_manager,
-            base_path,
+            base_path: final_base_path,
         }
     }
 }
