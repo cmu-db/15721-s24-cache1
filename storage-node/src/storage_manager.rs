@@ -5,9 +5,10 @@ use tokio::sync::{mpsc::Receiver, RwLock};
 use crate::{
     cache::{data::DataStore, policy::DataStoreCache},
     error::ParpulseResult,
-    server::RequestParams,
     storage_reader::{s3_diskmock::MockS3Reader, AsyncStorageReader, StorageReaderStream},
 };
+
+use storage_common::RequestParams;
 
 /// [`StorageManager`] handles the request from the storage client.
 ///
