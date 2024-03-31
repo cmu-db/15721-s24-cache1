@@ -176,7 +176,7 @@ impl<R: DataStoreReplacer + Send + Sync> DataStoreCache for MemDiskStoreCache<R>
         }
 
         // 3. If the data is successfully written to memory, directly return.
-        if bytes_to_disk.is_none() {
+        if self.mem_store.is_some() && bytes_to_disk.is_none() {
             return Ok(bytes_mem_written);
         }
 

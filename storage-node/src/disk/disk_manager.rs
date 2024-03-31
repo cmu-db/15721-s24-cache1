@@ -231,7 +231,7 @@ mod tests {
             .write_disk_all(path, content.as_bytes())
             .await
             .expect("write_disk_all failed");
-        let stream = RandomDiskReadStream::new(path, 1, 2).unwrap().boxed();
+        let stream = RandomDiskReadStream::new(path, 2, 4).unwrap().boxed();
         let output_path = &dir
             .join("test_disk_manager3_output.txt")
             .display()
@@ -256,11 +256,78 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_remove_file() {
+    async fn test_write_bytes_to_disk() {
         let disk_manager = DiskManager {};
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_owned();
         let path = &dir.join("test_disk_manager4.txt").display().to_string();
+        let content1 = "Hello, world!";
+        let content2 = "Bye, CMU!";
+        let bytes_written = disk_manager
+            .write_bytes_and_stream_to_disk(
+                Some(vec![Bytes::from(content1), Bytes::from(content2)]),
+                None,
+                path,
+            )
+            .await
+            .expect("write_bytes_to_disk failed");
+        assert_eq!(bytes_written, content1.len() + content2.len());
+        let (bytes_read, bytes) = disk_manager
+            .read_disk_all(path)
+            .await
+            .expect("read_disk_all failed");
+        assert_eq!(bytes_read, content1.len() + content2.len());
+        assert_eq!(bytes, Bytes::from(content1.to_owned() + content2));
+    }
+
+    #[tokio::test]
+    async fn test_write_bytes_and_stream_to_disk() {
+        let disk_manager = DiskManager {};
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_owned();
+        let path = &dir.join("test_disk_manager5.txt").display().to_string();
+        let content = "bhjoilkmnkbhaoijsdklmnjkbhiauosdjikbhjoilkmnkbhaoijsdklmnjkbhiauosdjik";
+        disk_manager
+            .write_disk_all(path, content.as_bytes())
+            .await
+            .expect("write_disk_all failed");
+        let mut stream = RandomDiskReadStream::new(path, 2, 4).unwrap().boxed();
+
+        let mut bytes_vec: Vec<Bytes> = Vec::new();
+        for _ in 0..3 {
+            let stream_data = stream.next().await.unwrap().unwrap();
+            bytes_vec.push(stream_data);
+        }
+
+        let output_path = &dir
+            .join("test_disk_manager5_output.txt")
+            .display()
+            .to_string();
+        let bytes_written = disk_manager
+            .write_bytes_and_stream_to_disk(Some(bytes_vec), Some(stream), output_path)
+            .await
+            .expect("write_reader_to_disk failed");
+        assert_eq!(bytes_written, content.len());
+
+        let (bytes_read, bytes) = disk_manager
+            .read_disk_all(output_path)
+            .await
+            .expect("read_disk_all failed");
+        assert_eq!(bytes_read, content.len());
+        assert_eq!(bytes, Bytes::from(content));
+        let file_size = disk_manager
+            .file_size(output_path)
+            .await
+            .expect("file_size failed");
+        assert_eq!(file_size, content.len() as u64);
+    }
+
+    #[tokio::test]
+    async fn test_remove_file() {
+        let disk_manager = DiskManager {};
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_owned();
+        let path = &dir.join("test_disk_manager6.txt").display().to_string();
         let content = "Hello, world!";
         disk_manager
             .write_disk_all(path, content.as_bytes())
