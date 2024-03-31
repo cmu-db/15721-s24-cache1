@@ -20,7 +20,7 @@ pub async fn storage_node_serve() -> ParpulseResult<()> {
     let dummy_size = 10;
     let cache = LruReplacer::new(dummy_size);
     // TODO: cache_base_path should be from config
-    let data_store_cache = MemDiskStoreCache::new(cache, "cache/".to_string());
+    let data_store_cache = MemDiskStoreCache::new(cache, "cache/".to_string(), None, None);
     let _storage_manager = StorageManager::new(data_store_cache);
 
     // TODO:

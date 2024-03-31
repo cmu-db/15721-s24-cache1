@@ -6,9 +6,8 @@ use crate::{
     disk::disk_manager::DiskManager, error::ParpulseResult, storage_reader::StorageReaderStream,
 };
 
-/// TODO(lanlou): make them configurable.
 const DEFAULT_DISK_READER_BUFFER_SIZE: usize = 8192;
-const DEFAULT_DISK_CHANNEL_BUFFER_SIZE: usize = 1024;
+const DEFAULT_CHANNEL_BUFFER_SIZE: usize = 1024;
 
 /// [`DiskStore`] stores the contents of remote objects on the local disk.
 pub struct DiskStore {
@@ -36,7 +35,7 @@ impl DiskStore {
             .disk_manager
             .disk_read_stream(key, DEFAULT_DISK_READER_BUFFER_SIZE)
             .await?;
-        let (tx, rx) = tokio::sync::mpsc::channel(DEFAULT_DISK_CHANNEL_BUFFER_SIZE);
+        let (tx, rx) = tokio::sync::mpsc::channel(DEFAULT_CHANNEL_BUFFER_SIZE);
         tokio::spawn(async move {
             loop {
                 match disk_stream.next().await {
@@ -56,13 +55,12 @@ impl DiskStore {
     pub async fn write_data(
         &self,
         key: String,
-        bytes_vec: Option<Vec<Bytes>>,
-        stream: Option<StorageReaderStream>,
+        data: StorageReaderStream,
     ) -> ParpulseResult<usize> {
         // NOTE(Yuanxin): Shall we spawn a task to write the data to disk?
         let bytes_written = self
             .disk_manager
-            .write_bytes_and_stream_to_disk(bytes_vec, stream, &key)
+            .write_bytes_and_stream_to_disk(data, &key)
             .await?;
         Ok(bytes_written)
     }
@@ -71,7 +69,7 @@ impl DiskStore {
         self.disk_manager.remove_file(key).await
     }
 
-    pub fn data_store_key(&self, remote_location: &str) -> String {
+    pub fn disk_store_key(&self, remote_location: &str) -> String {
         format!("{}{}", self.base_path, remote_location)
     }
 }

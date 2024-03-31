@@ -103,7 +103,7 @@ impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruKReplacer<K, V> {
         None
     }
 
-    fn put_value(&mut self, key: K, value: V) -> bool {
+    fn put_value(&mut self, key: K, value: V) -> (bool, Option<Vec<K>>) {
         if value.size() > self.max_capacity {
             // If the object size is greater than the max capacity, we do not insert the
             // object into the cache.
@@ -115,7 +115,7 @@ impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruKReplacer<K, V> {
                 value.size(),
                 self.max_capacity
             );
-            return false;
+            return (false, None);
         }
         let updated_size = value.size();
         if let Some(mut node) = self.cache_map.remove(&key) {
@@ -133,6 +133,7 @@ impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruKReplacer<K, V> {
             self.curr_timestamp += 1;
         }
         self.size += updated_size;
+        let mut evicted_keys = Vec::new();
         while self.size > self.max_capacity {
             let key_to_evict = self.evict(&key);
             debug_assert!(
@@ -140,14 +141,30 @@ impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruKReplacer<K, V> {
                 "key {:?} should have been evicted when cache size is greater than max capacity",
                 key
             );
+            if let Some(evicted_key) = key_to_evict {
+                evicted_keys.push(evicted_key);
+            }
         }
-        true
+        if !evicted_keys.is_empty() {
+            (true, Some(evicted_keys))
+        } else {
+            (true, None)
+        }
     }
 
     fn peek_value(&self, key: &K) -> Option<&V> {
         if let Some(node) = self.cache_map.get(key) {
             let cache_value = &node.value;
             Some(cache_value)
+        } else {
+            None
+        }
+    }
+
+    fn pop_value(&mut self, key: &K) -> Option<V> {
+        if let Some(node) = self.cache_map.remove(key) {
+            self.size -= node.value.size();
+            Some(node.value)
         } else {
             None
         }
@@ -164,8 +181,16 @@ impl DataStoreReplacer for LruKReplacer<ParpulseDataStoreCacheKey, ParpulseDataS
         self.get_value(key)
     }
 
-    fn put(&mut self, key: ParpulseDataStoreCacheKey, value: ParpulseDataStoreCacheValue) -> bool {
+    fn put(
+        &mut self,
+        key: ParpulseDataStoreCacheKey,
+        value: ParpulseDataStoreCacheValue,
+    ) -> (bool, Option<Vec<ParpulseDataStoreCacheKey>>) {
         self.put_value(key, value)
+    }
+
+    fn pop(&mut self, key: &ParpulseDataStoreCacheKey) -> Option<ParpulseDataStoreCacheValue> {
+        self.pop_value(key)
     }
 
     fn peek(&self, key: &ParpulseDataStoreCacheKey) -> Option<&ParpulseDataStoreCacheValue> {
@@ -221,7 +246,7 @@ mod tests {
         let key = "key1".to_string();
         let value = "value1".to_string();
         assert_eq!(cache.peek(&key), None);
-        assert!(cache.put(key.clone(), (value.clone(), 1)));
+        assert!(cache.put(key.clone(), (value.clone(), 1)).0);
         assert_eq!(cache.peek(&key), Some(&(value.clone(), 1)));
         assert_eq!(cache.len(), 1);
         assert_eq!(cache.size(), 1);

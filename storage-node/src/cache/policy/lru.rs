@@ -33,7 +33,7 @@ impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruReplacer<K, V> {
         }
     }
 
-    fn put_value(&mut self, key: K, value: V) -> bool {
+    fn put_value(&mut self, key: K, value: V) -> (bool, Option<Vec<K>>) {
         if value.size() > self.max_capacity {
             // If the object size is greater than the max capacity, we do not insert the
             // object into the cache.
@@ -46,7 +46,7 @@ impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruReplacer<K, V> {
                 value.size(),
                 self.max_capacity
             );
-            return false;
+            return (false, None);
         }
         if let Some(cache_value) = self.cache_map.get(&key) {
             // If the key already exists, update the cache size.
@@ -54,17 +54,32 @@ impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruReplacer<K, V> {
         }
         self.size += value.size();
         self.cache_map.insert(key.clone(), value);
+        let mut evicted_keys = Vec::new();
         while self.size > self.max_capacity {
             if let Some((key, cache_value)) = self.cache_map.pop_front() {
                 println!("-------- Evicting Key: {:?} --------", key);
+                evicted_keys.push(key);
                 self.size -= cache_value.size();
             }
         }
-        true
+        if !evicted_keys.is_empty() {
+            (true, Some(evicted_keys))
+        } else {
+            (true, None)
+        }
     }
 
     fn peek_value(&self, key: &K) -> Option<&V> {
         self.cache_map.get(key)
+    }
+
+    fn pop_value(&mut self, key: &K) -> Option<V> {
+        if let Some(cache_value) = self.cache_map.remove(key) {
+            self.size -= cache_value.size();
+            Some(cache_value)
+        } else {
+            None
+        }
     }
 }
 
@@ -73,8 +88,16 @@ impl DataStoreReplacer for LruReplacer<ParpulseDataStoreCacheKey, ParpulseDataSt
         self.get_value(key)
     }
 
-    fn put(&mut self, key: ParpulseDataStoreCacheKey, value: ParpulseDataStoreCacheValue) -> bool {
+    fn put(
+        &mut self,
+        key: ParpulseDataStoreCacheKey,
+        value: ParpulseDataStoreCacheValue,
+    ) -> (bool, Option<Vec<ParpulseDataStoreCacheKey>>) {
         self.put_value(key, value)
+    }
+
+    fn pop(&mut self, key: &ParpulseDataStoreCacheKey) -> Option<ParpulseDataStoreCacheValue> {
+        self.pop_value(key)
     }
 
     fn peek(&self, key: &ParpulseDataStoreCacheKey) -> Option<&ParpulseDataStoreCacheValue> {

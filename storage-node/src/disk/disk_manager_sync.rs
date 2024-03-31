@@ -1,12 +1,10 @@
 use bytes::{Bytes, BytesMut};
-use futures::stream::StreamExt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use crate::error::ParpulseResult;
 use crate::storage_manager::ParpulseReaderIterator;
-use crate::storage_reader::StorageReaderStream;
 
 /// [`DiskManagerSync`] contains the common logic to read from or write to a disk.
 ///
@@ -106,35 +104,6 @@ impl DiskManagerSync {
         Ok(bytes_written)
     }
 
-    // I have to add a `async` here... Better way?
-    pub async fn write_stream_reader_to_disk(
-        &mut self,
-        mut stream: StorageReaderStream,
-        disk_path: &str,
-    ) -> ParpulseResult<usize> {
-        if Path::new(disk_path).exists() {
-            return Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "disk file to write already exists",
-            )
-            .into());
-        }
-        let mut file = self.open_or_create(disk_path, true)?;
-        let mut bytes_written = 0;
-
-        loop {
-            match stream.next().await {
-                Some(Ok(bytes)) => {
-                    file.write_all(&bytes)?;
-                    bytes_written += bytes.len();
-                }
-                Some(Err(e)) => return Err(e),
-                None => break,
-            }
-        }
-        Ok(bytes_written)
-    }
-
     pub fn file_size(&self, path: &str) -> ParpulseResult<u64> {
         let metadata = fs::metadata(path)?;
         Ok(metadata.len())
@@ -187,8 +156,6 @@ impl ParpulseReaderIterator for DiskReadIterator {
 
 #[cfg(test)]
 mod tests {
-    use crate::disk::stream::RandomDiskReadStream;
-
     use super::*;
     #[test]
     fn test_simple_write_read() {
@@ -282,41 +249,6 @@ mod tests {
             .to_string();
         let bytes_written = disk_manager
             .write_iterator_reader_to_disk::<DiskReadIterator>(iterator, output_path)
-            .expect("write_reader_to_disk failed");
-        assert_eq!(bytes_written, content.len());
-
-        let (bytes_read, bytes) = disk_manager
-            .read_disk_all(output_path)
-            .expect("read_disk_all failed");
-        assert_eq!(bytes_read, content.len());
-        assert_eq!(bytes, Bytes::from(content));
-        let file_size = disk_manager
-            .file_size(output_path)
-            .expect("file_size failed");
-        assert_eq!(file_size, content.len() as u64);
-    }
-
-    #[tokio::test]
-    async fn test_write_stream_reader_to_disk() {
-        let mut disk_manager = DiskManagerSync {};
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().to_owned();
-        let path = &dir
-            .join("test_disk_manager_sync4.txt")
-            .display()
-            .to_string();
-        let content = "bhjoilkmnkbhaoijsdklmnjkbhiauosdjikbhjoilkmnkbhaoijsdklmnjkbhiauosdjik";
-        disk_manager
-            .write_disk_all(path, content.as_bytes())
-            .expect("write_disk_all failed");
-        let stream = RandomDiskReadStream::new(path, 1, 2).unwrap().boxed();
-        let output_path = &dir
-            .join("test_disk_manager3_output.txt")
-            .display()
-            .to_string();
-        let bytes_written = disk_manager
-            .write_stream_reader_to_disk(stream, output_path)
-            .await
             .expect("write_reader_to_disk failed");
         assert_eq!(bytes_written, content.len());
 

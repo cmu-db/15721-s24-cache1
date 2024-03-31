@@ -56,7 +56,15 @@ pub trait DataStoreReplacer {
     fn get(&mut self, key: &ParpulseDataStoreCacheKey) -> Option<&ParpulseDataStoreCacheValue>;
 
     /// Puts a value into the cache.
-    fn put(&mut self, key: ParpulseDataStoreCacheKey, value: ParpulseDataStoreCacheValue) -> bool;
+    /// Returns success or failure and the evicted key if applicable.
+    fn put(
+        &mut self,
+        key: ParpulseDataStoreCacheKey,
+        value: ParpulseDataStoreCacheValue,
+    ) -> (bool, Option<Vec<ParpulseDataStoreCacheKey>>);
+
+    /// Removes and returns the value corresponding to the key from the cache or None if it does not exist.
+    fn pop(&mut self, key: &ParpulseDataStoreCacheKey) -> Option<ParpulseDataStoreCacheValue>;
 
     /// Returns a reference to the value in the cache with no side effect on the
     /// cache.

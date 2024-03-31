@@ -9,12 +9,12 @@ pub mod memdisk;
 #[async_trait]
 pub trait DataStoreCache {
     async fn get_data_from_cache(
-        &self,
+        &mut self,
         remote_location: String,
     ) -> ParpulseResult<Option<Receiver<ParpulseResult<Bytes>>>>;
 
     async fn put_data_to_cache(
-        &self,
+        &mut self,
         remote_location: String,
         data_stream: StorageReaderStream,
     ) -> ParpulseResult<usize>;

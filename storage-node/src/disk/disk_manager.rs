@@ -84,9 +84,10 @@ impl DiskManager {
     // TODO(lanlou): We need to write data to disk & send data to network at the same time.
     // TOOD(lanlou): S3 stream now returns 10^5 bytes one time, and do we need to group all the bytes for
     // one file and write all of them to disk at once?
-    pub async fn write_stream_reader_to_disk(
+    pub async fn write_bytes_and_stream_to_disk(
         &self,
-        mut stream: StorageReaderStream,
+        bytes_vec: Option<Vec<Bytes>>,
+        stream: Option<StorageReaderStream>,
         disk_path: &str,
     ) -> ParpulseResult<usize> {
         if Path::new(disk_path).exists() {
@@ -98,14 +99,24 @@ impl DiskManager {
         }
         let mut file = self.open_or_create(disk_path, true).await?;
         let mut bytes_written = 0;
-        loop {
-            match stream.next().await {
-                Some(Ok(bytes)) => {
-                    file.write_all(&bytes).await?;
-                    bytes_written += bytes.len();
+
+        if let Some(bytes_vec) = bytes_vec {
+            for bytes in bytes_vec {
+                file.write_all(&bytes).await?;
+                bytes_written += bytes.len();
+            }
+        }
+
+        if let Some(mut stream) = stream {
+            loop {
+                match stream.next().await {
+                    Some(Ok(bytes)) => {
+                        file.write_all(&bytes).await?;
+                        bytes_written += bytes.len();
+                    }
+                    Some(Err(e)) => return Err(e),
+                    None => break,
                 }
-                Some(Err(e)) => return Err(e),
-                None => break,
             }
         }
         // FIXME: do we need a flush here?
@@ -226,7 +237,7 @@ mod tests {
             .display()
             .to_string();
         let bytes_written = disk_manager
-            .write_stream_reader_to_disk(stream, output_path)
+            .write_bytes_and_stream_to_disk(None, Some(stream), output_path)
             .await
             .expect("write_reader_to_disk failed");
         assert_eq!(bytes_written, content.len());

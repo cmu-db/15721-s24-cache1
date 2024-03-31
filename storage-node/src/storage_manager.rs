@@ -30,7 +30,7 @@ impl<C: DataStoreCache> StorageManager<C> {
         (bucket, keys)
     }
 
-    pub async fn get_data(&self, _request: RequestParams) -> ParpulseResult<usize> {
+    pub async fn get_data(&mut self, _request: RequestParams) -> ParpulseResult<usize> {
         // 1. Try to get data from the cache first.
         // 2. If cache miss, then go to storage reader to fetch the data from
         // the underlying storage.
@@ -95,8 +95,9 @@ mod tests {
         let dir = tmp.path().to_owned();
         let cache_base_path = dir.join("test-storage-manager");
 
-        let data_store_cache = MemDiskStoreCache::new(cache, cache_base_path.display().to_string());
-        let storage_manager = StorageManager::new(data_store_cache);
+        let data_store_cache =
+            MemDiskStoreCache::new(cache, cache_base_path.display().to_string(), None, None);
+        let mut storage_manager = StorageManager::new(data_store_cache);
 
         let request_path = "dummy_s3_request";
         let request = RequestParams::S3(request_path.to_string());
