@@ -210,4 +210,50 @@ mod tests {
         );
         assert_eq!(cache.get(&("key2".to_string())), None);
     }
+
+    #[test]
+    fn test_pop_key() {
+        let mut cache =
+            LruReplacer::<ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue>::new(30);
+        cache.put("key1".to_string(), ("value1".to_string(), 1));
+        cache.put("key2".to_string(), ("value2".to_string(), 2));
+        cache.put("key3".to_string(), ("value3".to_string(), 3));
+        cache.put("key4".to_string(), ("value4".to_string(), 4));
+        cache.put("key5".to_string(), ("value5".to_string(), 5));
+        assert_eq!(cache.size(), 15);
+        assert_eq!(cache.len(), 5);
+        assert_eq!(
+            cache.pop(&"key1".to_string()),
+            Some(("value1".to_string(), 1))
+        );
+        assert_eq!(cache.size(), 14);
+        assert_eq!(cache.len(), 4);
+        assert_eq!(cache.pop(&"key1".to_string()), None);
+        assert_eq!(cache.size(), 14);
+        assert_eq!(cache.len(), 4);
+        assert_eq!(
+            cache.pop(&"key2".to_string()),
+            Some(("value2".to_string(), 2))
+        );
+        assert_eq!(cache.size(), 12);
+        assert_eq!(cache.len(), 3);
+        assert_eq!(
+            cache.pop(&"key3".to_string()),
+            Some(("value3".to_string(), 3))
+        );
+        assert_eq!(cache.size(), 9);
+        assert_eq!(cache.len(), 2);
+        assert_eq!(
+            cache.pop(&"key4".to_string()),
+            Some(("value4".to_string(), 4))
+        );
+        assert_eq!(cache.size(), 5);
+        assert_eq!(cache.len(), 1);
+        assert_eq!(
+            cache.pop(&"key5".to_string()),
+            Some(("value5".to_string(), 5))
+        );
+        assert_eq!(cache.size(), 0);
+        assert_eq!(cache.len(), 0);
+    }
 }
