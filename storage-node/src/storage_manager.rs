@@ -1,9 +1,10 @@
 use crate::{
     cache::data_store_cache::DataStoreCache,
     error::ParpulseResult,
-    server::RequestParams,
     storage_reader::{s3_diskmock::MockS3Reader, AsyncStorageReader},
 };
+
+use storage_common::RequestParams;
 
 /// [`StorageManager`] handles the request from the storage client.
 ///
