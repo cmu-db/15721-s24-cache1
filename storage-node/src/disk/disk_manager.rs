@@ -82,8 +82,8 @@ impl DiskManager {
     // TODO(lanlou): we must handle write-write conflict correctly in the furture.
     // One way is using `write commit` to handle read-write conflict, then there is no w-w conflict.
     // TODO(lanlou): We need to write data to disk & send data to network at the same time.
-    // TOOD(lanlou): Now S3 stream returns small amount of data each time, so it would be expensive
-    // in the current implementation since one disk I/O one S3 stream next (too many disk I/O!)
+    // TOOD(lanlou): S3 stream now returns 10^5 bytes one time, and do we need to group all the bytes for
+    // one file and write all of them to disk at once?
     pub async fn write_stream_reader_to_disk(
         &self,
         mut stream: StorageReaderStream,

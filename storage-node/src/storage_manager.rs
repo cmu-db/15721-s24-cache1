@@ -1,12 +1,8 @@
-use bytes::Bytes;
-
-use tokio::sync::{mpsc::Receiver, RwLock};
-
 use crate::{
-    cache::{data::DataStore, policy::DataStoreCache},
+    cache::data_store_cache::DataStoreCache,
     error::ParpulseResult,
     server::RequestParams,
-    storage_reader::{s3_diskmock::MockS3Reader, AsyncStorageReader, StorageReaderStream},
+    storage_reader::{s3_diskmock::MockS3Reader, AsyncStorageReader},
 };
 
 /// [`StorageManager`] handles the request from the storage client.
@@ -15,19 +11,14 @@ use crate::{
 /// which should be responsible for handling multiple requests at the
 /// same time.
 
-pub struct StorageManager<C: DataStoreCache, DS: DataStore> {
-    /// Cache_key = S3_PATH; Cache_value = (CACHE_BASE_PATH + S3_PATH, size)
-    data_store_cache: RwLock<C>,
-    /// We don't use lock here because `data_store` itself should handle the concurrency.
-    data_store: DS,
+pub struct StorageManager<C: DataStoreCache> {
+    /// We don't use lock here because `data_store_cache` itself should handle the concurrency.
+    data_store_cache: C,
 }
 
-impl<C: DataStoreCache, DS: DataStore> StorageManager<C, DS> {
-    pub fn new(data_store_cache: C, data_store: DS) -> Self {
-        Self {
-            data_store_cache: RwLock::new(data_store_cache),
-            data_store,
-        }
+impl<C: DataStoreCache> StorageManager<C> {
+    pub fn new(data_store_cache: C) -> Self {
+        Self { data_store_cache }
     }
 
     fn dummy_s3_request(&self) -> (String, Vec<String>) {
@@ -49,7 +40,10 @@ impl<C: DataStoreCache, DS: DataStore> StorageManager<C, DS> {
 
         // FIXME: Cache key should be <bucket + key>. Might refactor the underlying S3
         // reader as one S3 key for one reader.
-        let data_rx = self.get_data_from_cache(bucket.clone()).await?;
+        let data_rx = self
+            .data_store_cache
+            .get_data_from_cache(bucket.clone())
+            .await?;
         if let Some(mut data_rx) = data_rx {
             let mut data_size: usize = 0;
             while let Some(data) = data_rx.recv().await {
@@ -67,47 +61,11 @@ impl<C: DataStoreCache, DS: DataStore> StorageManager<C, DS> {
             // Get data from the underlying storage and put the data into the cache.
             let reader = MockS3Reader::new(bucket.clone(), keys).await;
             let data_size = self
+                .data_store_cache
                 .put_data_to_cache(bucket, reader.into_stream().await?)
                 .await?;
             Ok(data_size)
         }
-    }
-
-    pub async fn get_data_from_cache(
-        &self,
-        remote_location: String,
-    ) -> ParpulseResult<Option<Receiver<ParpulseResult<Bytes>>>> {
-        // TODO: Refine the lock.
-        let mut data_store_cache = self.data_store_cache.write().await;
-        match data_store_cache.get(&remote_location) {
-            Some((data_store_key, _)) => {
-                if let Some(data) = self.data_store.read_data(data_store_key).await? {
-                    Ok(Some(data))
-                } else {
-                    unreachable!()
-                }
-            }
-            None => Ok(None),
-        }
-    }
-
-    pub async fn put_data_to_cache(
-        &self,
-        remote_location: String,
-        data_stream: StorageReaderStream,
-    ) -> ParpulseResult<usize> {
-        let data_store_key = self.data_store.data_store_key(&remote_location);
-        // TODO: Write the data store cache first w/ `incompleted` state and update the state
-        // after finishing writing into the data store.
-        let data_size = self
-            .data_store
-            .write_data(data_store_key.clone(), data_stream)
-            .await?;
-        let mut data_store_cache = self.data_store_cache.write().await;
-        if !data_store_cache.put(remote_location, (data_store_key.clone(), data_size)) {
-            self.data_store.clean_data(&data_store_key).await?;
-        }
-        Ok(data_size)
     }
 }
 
@@ -122,9 +80,8 @@ pub trait ParpulseReaderIterator: Iterator<Item = ParpulseResult<usize>> {
 mod tests {
     use std::time::Instant;
 
-    use crate::{
-        cache::{data::disk::DiskStore, policy::lru::LruCache},
-        disk::disk_manager::DiskManager,
+    use crate::cache::{
+        data_store_cache::memdisk::cache_manager::MemDiskStoreCache, policy::lru::LruReplacer,
     };
 
     use super::*;
@@ -132,16 +89,14 @@ mod tests {
     #[tokio::test]
     async fn test_storage_manager() {
         let dummy_size = 1000000;
-        let cache = LruCache::new(dummy_size);
+        let cache = LruReplacer::new(dummy_size);
 
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_owned();
         let cache_base_path = dir.join("test-storage-manager");
-        let data_store = DiskStore::new(
-            DiskManager::default(),
-            cache_base_path.display().to_string(),
-        );
-        let storage_manager = StorageManager::new(cache, data_store);
+
+        let data_store_cache = MemDiskStoreCache::new(cache, cache_base_path.display().to_string());
+        let storage_manager = StorageManager::new(data_store_cache);
 
         let request_path = "dummy_s3_request";
         let request = RequestParams::S3(request_path.to_string());

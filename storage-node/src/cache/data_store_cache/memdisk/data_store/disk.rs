@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use bytes::Bytes;
 use futures::StreamExt;
 use tokio::sync::mpsc::Receiver;
@@ -6,8 +5,6 @@ use tokio::sync::mpsc::Receiver;
 use crate::{
     disk::disk_manager::DiskManager, error::ParpulseResult, storage_reader::StorageReaderStream,
 };
-
-use super::DataStore;
 
 const DEFAULT_DISK_READER_BUFFER_SIZE: usize = 8192;
 const DEFAULT_CHANNEL_BUFFER_SIZE: usize = 1024;
@@ -28,9 +25,8 @@ impl DiskStore {
     }
 }
 
-#[async_trait]
-impl DataStore for DiskStore {
-    async fn read_data(
+impl DiskStore {
+    pub async fn read_data(
         &self,
         key: &str,
     ) -> ParpulseResult<Option<Receiver<ParpulseResult<Bytes>>>> {
@@ -56,7 +52,11 @@ impl DataStore for DiskStore {
         Ok(Some(rx))
     }
 
-    async fn write_data(&self, key: String, data: StorageReaderStream) -> ParpulseResult<usize> {
+    pub async fn write_data(
+        &self,
+        key: String,
+        data: StorageReaderStream,
+    ) -> ParpulseResult<usize> {
         // NOTE(Yuanxin): Shall we spawn a task to write the data to disk?
         let bytes_written = self
             .disk_manager
@@ -65,11 +65,11 @@ impl DataStore for DiskStore {
         Ok(bytes_written)
     }
 
-    async fn clean_data(&self, key: &str) -> ParpulseResult<()> {
+    pub async fn clean_data(&self, key: &str) -> ParpulseResult<()> {
         self.disk_manager.remove_file(key).await
     }
 
-    fn data_store_key(&self, remote_location: &str) -> String {
+    pub fn data_store_key(&self, remote_location: &str) -> String {
         format!("{}{}", self.base_path, remote_location)
     }
 }
