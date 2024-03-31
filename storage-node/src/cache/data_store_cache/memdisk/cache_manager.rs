@@ -99,6 +99,8 @@ impl<R: DataStoreReplacer + Send + Sync> DataStoreCache for MemDiskStoreCache<R>
         remote_location: String,
         mut data_stream: StorageReaderStream,
     ) -> ParpulseResult<usize> {
+        // TODO: Refine the lock.
+        // TODO(lanlou): Also write the data to network.
         let mut bytes_to_disk = None;
         let mut evicted_bytes_to_disk: Option<
             Vec<(ParpulseDataStoreCacheKey, (Vec<Bytes>, usize))>,
@@ -110,6 +112,7 @@ impl<R: DataStoreReplacer + Send + Sync> DataStoreCache for MemDiskStoreCache<R>
                 match data_stream.next().await {
                     Some(Ok(bytes)) => {
                         bytes_written += bytes.len();
+                        // Need to write the data to network.
                         if let Some((bytes_vec, _)) =
                             mem_store.write_data(mem_store_key.clone(), bytes)
                         {
@@ -146,6 +149,7 @@ impl<R: DataStoreReplacer + Send + Sync> DataStoreCache for MemDiskStoreCache<R>
             }
         }
 
+        // Don't need to write the data to network for evicted keys.
         if let Some(evicted_bytes_to_disk) = evicted_bytes_to_disk {
             for (key, (bytes_vec, data_size)) in evicted_bytes_to_disk {
                 let disk_store_key = self.disk_store.data_store_key(&key);
@@ -162,6 +166,7 @@ impl<R: DataStoreReplacer + Send + Sync> DataStoreCache for MemDiskStoreCache<R>
             }
         }
 
+        // Need to write the data to network for the current key.
         let disk_store_key = self.disk_store.data_store_key(&remote_location);
         // TODO: Write the data store cache first w/ `incompleted` state and update the state
         // after finishing writing into the data store.
