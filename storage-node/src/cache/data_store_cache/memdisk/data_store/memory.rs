@@ -8,6 +8,7 @@ use crate::error::ParpulseResult;
 const DEFAULT_MEM_CHANNEL_BUFFER_SIZE: usize = 1024;
 
 pub struct MemStore {
+    /// data: remote_location -> (data, size)
     data: HashMap<String, (Vec<Bytes>, usize)>,
     max_file_size: usize,
 }
@@ -31,6 +32,9 @@ impl MemStore {
         Ok(Some(rx))
     }
 
+    /// Writes data to the memory store, also tracks the size. If the size for one key is too large,
+    /// we will delete the data from the memory store and return all the data to the caller.
+    /// If return value is None, it means successful write. Otherwise, it means unsuccessful write.
     pub fn write_data(&mut self, key: String, bytes: Bytes) -> Option<(Vec<Bytes>, usize)> {
         let (bytes_vec, size) = self.data.entry(key.clone()).or_insert((Vec::new(), 0));
         *size += bytes.len();
@@ -47,9 +51,5 @@ impl MemStore {
 
     pub fn clean_data(&mut self, key: &str) -> Option<(Vec<Bytes>, usize)> {
         self.data.remove(key)
-    }
-
-    pub fn data_store_key(&self, remote_location: &str) -> String {
-        remote_location.to_string()
     }
 }

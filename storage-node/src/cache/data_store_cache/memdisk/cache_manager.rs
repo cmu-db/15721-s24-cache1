@@ -102,20 +102,23 @@ impl<R: DataStoreReplacer + Send + Sync> DataStoreCache for MemDiskStoreCache<R>
         // TODO: Refine the lock.
         // TODO(lanlou): Also write the data to network.
         let mut bytes_to_disk = None;
+        let mut bytes_mem_written = 0;
         let mut evicted_bytes_to_disk: Option<
             Vec<(ParpulseDataStoreCacheKey, (Vec<Bytes>, usize))>,
         > = None;
+        // 1. If the mem_store is enabled, first try to write the data to memory.
+        // Note: Only file which size < mem_max_file_size can be written to memory.
         if let Some(mem_store) = &mut self.mem_store {
-            let mem_store_key = mem_store.data_store_key(&remote_location);
-            let mut bytes_written = 0;
             loop {
                 match data_stream.next().await {
                     Some(Ok(bytes)) => {
-                        bytes_written += bytes.len();
+                        bytes_mem_written += bytes.len();
                         // Need to write the data to network.
                         if let Some((bytes_vec, _)) =
-                            mem_store.write_data(mem_store_key.clone(), bytes)
+                            mem_store.write_data(remote_location.clone(), bytes)
                         {
+                            // If write_data returns something, it means the file size is too large
+                            // to fit in the memory. We should put it to disk cache.
                             bytes_to_disk = Some(bytes_vec);
                             break;
                         }
@@ -126,29 +129,35 @@ impl<R: DataStoreReplacer + Send + Sync> DataStoreCache for MemDiskStoreCache<R>
             }
 
             if bytes_to_disk.is_none() {
+                // If bytes_to_disk has nothing, it means the data has been successfully written to memory.
+                // We have to put it into mem_replacer too.
                 let mut mem_replacer = self.mem_replacer.as_ref().unwrap().write().await;
                 let (status, evicted_keys) = mem_replacer.put(
                     remote_location.clone(),
-                    (mem_store_key.clone(), bytes_written),
+                    (remote_location.clone(), bytes_mem_written),
                 );
                 if !status {
                     // Put the data to disk cache.
-                    bytes_to_disk = Some(mem_store.clean_data(&mem_store_key).unwrap().0);
-                }
-                if let Some(evicted_keys) = evicted_keys {
-                    evicted_bytes_to_disk = Some(
-                        evicted_keys
-                            .iter()
-                            .map(|key| {
-                                let (bytes_vec, data_size) = mem_store.clean_data(key).unwrap();
-                                (key.clone(), (bytes_vec, data_size))
-                            })
-                            .collect(),
-                    );
+                    bytes_to_disk = Some(mem_store.clean_data(&remote_location).unwrap().0);
+                } else {
+                    // If successfully putting it into mem_replacer, we should record the evicted data,
+                    // delete them from mem_store, and put all of them to disk cache.
+                    if let Some(evicted_keys) = evicted_keys {
+                        evicted_bytes_to_disk = Some(
+                            evicted_keys
+                                .iter()
+                                .map(|key| {
+                                    let (bytes_vec, data_size) = mem_store.clean_data(key).unwrap();
+                                    (key.clone(), (bytes_vec, data_size))
+                                })
+                                .collect(),
+                        );
+                    }
                 }
             }
         }
 
+        // 2. If applicable, put all the evicted data into disk cache.
         // Don't need to write the data to network for evicted keys.
         if let Some(evicted_bytes_to_disk) = evicted_bytes_to_disk {
             for (key, (bytes_vec, data_size)) in evicted_bytes_to_disk {
@@ -166,6 +175,12 @@ impl<R: DataStoreReplacer + Send + Sync> DataStoreCache for MemDiskStoreCache<R>
             }
         }
 
+        // 3. If the data is successfully written to memory, directly return.
+        if bytes_to_disk.is_none() {
+            return Ok(bytes_mem_written);
+        }
+
+        // 4. If the data is not written to memory_cache successfully, then cache it to disk.
         // Need to write the data to network for the current key.
         let disk_store_key = self.disk_store.data_store_key(&remote_location);
         // TODO: Write the data store cache first w/ `incompleted` state and update the state
@@ -180,6 +195,7 @@ impl<R: DataStoreReplacer + Send + Sync> DataStoreCache for MemDiskStoreCache<R>
             .0
         {
             self.disk_store.clean_data(&disk_store_key).await?;
+            // TODO: do we need to notify the caller this failure?
         }
         Ok(data_size)
     }
