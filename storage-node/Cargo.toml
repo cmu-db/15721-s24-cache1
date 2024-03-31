@@ -21,5 +21,7 @@ async-trait = "0.1"
 storage-common = { path = "../storage-common" }
 warp = "0.3"
 tokio-util = "0.7"
-tempfile = "3.2"
 reqwest = "0.12"
+tempfile = "3.10.1"
+tokio-stream = "0.1"
+rand = "0.8"

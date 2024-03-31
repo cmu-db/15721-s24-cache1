@@ -34,3 +34,6 @@ impl From<ByteStreamError> for ParpulseError {
 }
 
 pub type ParpulseResult<T> = std::result::Result<T, ParpulseError>;
+
+unsafe impl Send for ParpulseError {}
+unsafe impl Sync for ParpulseError {}

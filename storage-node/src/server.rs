@@ -7,7 +7,9 @@ use tokio_util::io::ReaderStream;
 use warp::{Filter, Rejection, Reply};
 
 use crate::{
-    cache::lru::LruCache, disk::disk_manager_sync::DiskManagerSync, error::ParpulseResult,
+    cache::{data::disk::DiskStore, policy::lru::LruCache},
+    disk::disk_manager::DiskManager,
+    error::ParpulseResult,
     storage_manager::StorageManager,
 };
 
@@ -15,8 +17,10 @@ pub async fn storage_node_serve() -> ParpulseResult<()> {
     // TODO: Read the type of the cache from config.
     let dummy_size = 10;
     let cache = LruCache::new(dummy_size);
-    let disk_manager = DiskManagerSync::default();
-    let storage_manager = StorageManager::new(cache, disk_manager, "cache/".to_string());
+    let disk_manager = DiskManager::default();
+    // TODO: cache_base_path should be from config
+    let data_store = DiskStore::new(disk_manager, "cache/".to_string());
+    let _storage_manager = StorageManager::new(cache, data_store);
 
     // FIXME (kunle): We need to get the file from storage manager. For now we directly read
     // the file from disk. I will update it after the storage manager provides the relevant API.
