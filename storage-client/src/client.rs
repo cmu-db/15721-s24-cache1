@@ -16,7 +16,7 @@ use crate::{StorageClient, StorageRequest};
 
 /// The batch size for the record batch.
 const BATCH_SIZE: usize = 3;
-const CHANNEL_CAPACITY: usize = 1;
+const CHANNEL_CAPACITY: usize = 10;
 
 pub struct StorageClientImpl {
     _storage_server_endpoint: Uri,
@@ -113,7 +113,6 @@ impl StorageClient for StorageClientImpl {
     }
 
     // TODO (kunle): I don't think this function is necessary.
-    #[cfg(feature = "ignore")]
     async fn request_data_sync(&self, _request: StorageRequest) -> Result<Vec<RecordBatch>> {
         todo!()
     }
@@ -127,7 +126,7 @@ mod tests {
 
     /// WARNING: Put userdata1.parquet in the storage-node/tests/parquet directory before running this test.
     #[tokio::test]
-    async fn test_storage_client_wo_ee_catalog() -> Result<()> {
+    async fn test_storage_client_wo_ee_catalog() {
         // Create a mock server to serve the parquet file.
         let mut server = Server::new_async().await;
         println!("server host: {}", server.host_with_port());
@@ -139,9 +138,13 @@ mod tests {
 
         let server_endpoint = server.url() + "/";
         // The catalog endpoint is not used anyway. So randomly pass a url.
-        let storage_client = StorageClientImpl::new(&server_endpoint, "localhost:3031")?;
+        let storage_client = StorageClientImpl::new(&server_endpoint, "localhost:3031")
+            .expect("Failed to create storage client.");
         let request = StorageRequest::Table(1);
-        let mut receiver = storage_client.request_data(request).await?;
+        let mut receiver = storage_client
+            .request_data(request)
+            .await
+            .expect("Failed to get data from the server.");
         let mut record_batches = vec![];
         while let Some(record_batch) = receiver.recv().await {
             record_batches.push(record_batch);
@@ -161,7 +164,5 @@ mod tests {
             first_batch.column(3).as_any().downcast_ref::<StringArray>(),
             Some(&last_names)
         );
-
-        Ok(())
     }
 }

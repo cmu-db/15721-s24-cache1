@@ -71,7 +71,6 @@ pub async fn storage_node_serve(file_dir: RequestParams) -> ParpulseResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::Result;
     use reqwest::Client;
     use std::fs;
     use std::io::Write;
@@ -79,7 +78,7 @@ mod tests {
 
     /// WARNING: Put userdata1.parquet in the storage-node/tests/parquet directory before running this test.
     #[tokio::test]
-    async fn test_download_file() -> Result<()> {
+    async fn test_download_file() {
         let file_dir = RequestParams::File("tests/parquet".to_string());
 
         // Start the server
@@ -92,20 +91,24 @@ mod tests {
 
         let url = "http://localhost:3030/file/userdata1.parquet";
         let client = Client::new();
-        let mut response = client.get(url).send().await?;
+        let mut response = client
+            .get(url)
+            .send()
+            .await
+            .expect("Failed to get response from the server.");
         assert!(
             response.status().is_success(),
             "Failed to download file. Status code: {}",
             response.status()
         );
 
-        let temp_dir = tempdir()?;
+        let temp_dir = tempdir().unwrap();
         let file_path = temp_dir.path().join("userdata1.parquet");
-        let mut file = fs::File::create(&file_path)?;
+        let mut file = fs::File::create(&file_path).unwrap();
 
         // Stream the response body and write to the file
-        while let Some(chunk) = response.chunk().await? {
-            file.write_all(&chunk)?;
+        while let Some(chunk) = response.chunk().await.unwrap() {
+            file.write_all(&chunk).unwrap();
         }
         assert!(file_path.exists(), "File not found after download");
 
@@ -115,7 +118,5 @@ mod tests {
         assert_eq!(original_file, downloaded_file);
 
         server_handle.abort();
-
-        Ok(())
     }
 }

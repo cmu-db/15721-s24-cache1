@@ -36,6 +36,5 @@ pub trait StorageClient: Send + Sync + 'static {
     async fn request_data(&self, request: StorageRequest) -> Result<Receiver<RecordBatch>>;
 
     /// Returns all the requested data as a whole.
-    #[cfg(feature = "ignore")]
     async fn request_data_sync(&self, request: StorageRequest) -> Result<Vec<RecordBatch>>;
 }
