@@ -50,7 +50,7 @@ impl DataStoreCacheValue for ParpulseDataStoreCacheValue {
 ///
 /// There are different cache policies for the data store cache, such as LRU, LRU-K, etc. See
 /// other files in this module for more details.
-pub trait DataStoreReplacer {
+pub trait DataStoreReplacer: Send + Sync {
     /// Gets a value from the cache. Might has side effect on the cache (e.g.
     /// modifying some bookkeeping fields in the cache).
     fn get(&mut self, key: &ParpulseDataStoreCacheKey) -> Option<&ParpulseDataStoreCacheValue>;
@@ -62,9 +62,6 @@ pub trait DataStoreReplacer {
         key: ParpulseDataStoreCacheKey,
         value: ParpulseDataStoreCacheValue,
     ) -> (bool, Option<Vec<ParpulseDataStoreCacheKey>>);
-
-    /// Removes and returns the value corresponding to the key from the cache or None if it does not exist.
-    fn pop(&mut self, key: &ParpulseDataStoreCacheKey) -> Option<ParpulseDataStoreCacheValue>;
 
     /// Returns a reference to the value in the cache with no side effect on the
     /// cache.

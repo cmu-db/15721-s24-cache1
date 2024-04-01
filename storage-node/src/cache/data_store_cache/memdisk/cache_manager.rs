@@ -21,7 +21,7 @@ use tokio::sync::mpsc::Receiver;
 /// TODO(lanlou): make this value configurable.
 pub const DEFAULT_MEM_CACHE_MAX_FILE_SIZE: usize = 1024 * 512;
 
-pub struct MemDiskStoreCache<R: DataStoreReplacer + Send + Sync> {
+pub struct MemDiskStoreCache<R: DataStoreReplacer> {
     disk_store: DiskStore,
     mem_store: Option<MemStore>,
     /// Cache_key = S3_PATH; Cache_value = (CACHE_BASE_PATH + S3_PATH, size)
@@ -29,7 +29,7 @@ pub struct MemDiskStoreCache<R: DataStoreReplacer + Send + Sync> {
     mem_replacer: Option<RwLock<R>>,
 }
 
-impl<R: DataStoreReplacer + Send + Sync> MemDiskStoreCache<R> {
+impl<R: DataStoreReplacer> MemDiskStoreCache<R> {
     pub fn new(
         disk_replacer: R,
         disk_base_path: String,
@@ -60,15 +60,15 @@ impl<R: DataStoreReplacer + Send + Sync> MemDiskStoreCache<R> {
 }
 
 #[async_trait]
-impl<R: DataStoreReplacer + Send + Sync> DataStoreCache for MemDiskStoreCache<R> {
+impl<R: DataStoreReplacer> DataStoreCache for MemDiskStoreCache<R> {
     async fn get_data_from_cache(
         &mut self,
         remote_location: String,
     ) -> ParpulseResult<Option<Receiver<ParpulseResult<Bytes>>>> {
         // TODO: Refine the lock.
         if let Some(mem_store) = &self.mem_store {
-            let mut mem_repalcer = self.mem_replacer.as_ref().unwrap().write().await;
-            if let Some((data_store_key, _)) = mem_repalcer.get(&remote_location) {
+            let mut mem_replacer = self.mem_replacer.as_ref().unwrap().write().await;
+            if let Some((data_store_key, _)) = mem_replacer.get(&remote_location) {
                 match mem_store.read_data(data_store_key) {
                     Ok(Some(rx)) => return Ok(Some(rx)),
                     Ok(None) => {
