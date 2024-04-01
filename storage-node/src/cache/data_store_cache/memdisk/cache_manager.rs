@@ -132,17 +132,18 @@ impl<R: DataStoreReplacer> DataStoreCache for MemDiskStoreCache<R> {
                 // If bytes_to_disk has nothing, it means the data has been successfully written to memory.
                 // We have to put it into mem_replacer too.
                 let mut mem_replacer = self.mem_replacer.as_ref().unwrap().write().await;
-                let (status, evicted_keys) = mem_replacer.put(
+                let replacer_put_status = mem_replacer.put(
                     remote_location.clone(),
                     (remote_location.clone(), bytes_mem_written),
                 );
-                if !status {
+                // Insertion fails.
+                if replacer_put_status.is_none() {
                     // Put the data to disk cache.
                     bytes_to_disk = Some(mem_store.clean_data(&remote_location).unwrap().0);
                 } else {
                     // If successfully putting it into mem_replacer, we should record the evicted data,
                     // delete them from mem_store, and put all of them to disk cache.
-                    if let Some(evicted_keys) = evicted_keys {
+                    if let Some(evicted_keys) = replacer_put_status {
                         evicted_bytes_to_disk = Some(
                             evicted_keys
                                 .iter()
@@ -167,9 +168,9 @@ impl<R: DataStoreReplacer> DataStoreCache for MemDiskStoreCache<R> {
                     .write_data(disk_store_key.clone(), Some(bytes_vec), None)
                     .await?;
                 let mut disk_replacer = self.disk_replacer.write().await;
-                if !disk_replacer
+                if disk_replacer
                     .put(remote_location_evicted, (disk_store_key.clone(), data_size))
-                    .0
+                    .is_none()
                 {
                     self.disk_store.clean_data(&disk_store_key).await?;
                 }
@@ -191,9 +192,9 @@ impl<R: DataStoreReplacer> DataStoreCache for MemDiskStoreCache<R> {
             .write_data(disk_store_key.clone(), bytes_to_disk, Some(data_stream))
             .await?;
         let mut disk_replacer = self.disk_replacer.write().await;
-        if !disk_replacer
+        if disk_replacer
             .put(remote_location, (disk_store_key.clone(), data_size))
-            .0
+            .is_none()
         {
             self.disk_store.clean_data(&disk_store_key).await?;
             // TODO: do we need to notify the caller this failure?

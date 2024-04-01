@@ -104,7 +104,7 @@ impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruKReplacer<K, V> {
         None
     }
 
-    fn put_value(&mut self, key: K, value: V) -> (bool, Option<Vec<K>>) {
+    fn put_value(&mut self, key: K, value: V) -> Option<Vec<K>> {
         if value.size() > self.max_capacity {
             // If the object size is greater than the max capacity, we do not insert the
             // object into the cache.
@@ -116,7 +116,7 @@ impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruKReplacer<K, V> {
                 value.size(),
                 self.max_capacity
             );
-            return (false, None);
+            return None;
         }
         let updated_size = value.size();
         let mut new_history: VecDeque<Timestamp> = VecDeque::new();
@@ -148,11 +148,7 @@ impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruKReplacer<K, V> {
                 evicted_keys.push(evicted_key);
             }
         }
-        if !evicted_keys.is_empty() {
-            (true, Some(evicted_keys))
-        } else {
-            (true, None)
-        }
+        Some(evicted_keys)
     }
 
     fn peek_value(&self, key: &K) -> Option<&V> {
@@ -179,7 +175,7 @@ impl DataStoreReplacer for LruKReplacer<ParpulseDataStoreCacheKey, ParpulseDataS
         &mut self,
         key: ParpulseDataStoreCacheKey,
         value: ParpulseDataStoreCacheValue,
-    ) -> (bool, Option<Vec<ParpulseDataStoreCacheKey>>) {
+    ) -> Option<Vec<ParpulseDataStoreCacheKey>> {
         self.put_value(key, value)
     }
 
@@ -236,7 +232,7 @@ mod tests {
         let key = "key1".to_string();
         let value = "value1".to_string();
         assert_eq!(cache.peek(&key), None);
-        assert!(cache.put(key.clone(), (value.clone(), 1)).0);
+        assert!(cache.put(key.clone(), (value.clone(), 1)).is_some());
         assert_eq!(cache.peek(&key), Some(&(value.clone(), 1)));
         assert_eq!(cache.len(), 1);
         assert_eq!(cache.size(), 1);

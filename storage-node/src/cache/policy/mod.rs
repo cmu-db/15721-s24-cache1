@@ -56,12 +56,13 @@ pub trait DataStoreReplacer: Send + Sync {
     fn get(&mut self, key: &ParpulseDataStoreCacheKey) -> Option<&ParpulseDataStoreCacheValue>;
 
     /// Puts a value into the cache.
-    /// Returns success or failure and the evicted key if applicable.
+    /// Returns `None`: insertion failed.
+    /// Returns `Some`: insertion successful with a list of keys that are evicted from the cache.
     fn put(
         &mut self,
         key: ParpulseDataStoreCacheKey,
         value: ParpulseDataStoreCacheValue,
-    ) -> (bool, Option<Vec<ParpulseDataStoreCacheKey>>);
+    ) -> Option<Vec<ParpulseDataStoreCacheKey>>;
 
     /// Returns a reference to the value in the cache with no side effect on the
     /// cache.

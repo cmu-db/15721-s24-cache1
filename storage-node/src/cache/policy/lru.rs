@@ -33,7 +33,7 @@ impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruReplacer<K, V> {
         }
     }
 
-    fn put_value(&mut self, key: K, value: V) -> (bool, Option<Vec<K>>) {
+    fn put_value(&mut self, key: K, value: V) -> Option<Vec<K>> {
         if value.size() > self.max_capacity {
             // If the object size is greater than the max capacity, we do not insert the
             // object into the cache.
@@ -46,7 +46,7 @@ impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruReplacer<K, V> {
                 value.size(),
                 self.max_capacity
             );
-            return (false, None);
+            return None;
         }
         if let Some(cache_value) = self.cache_map.get(&key) {
             // If the key already exists, update the cache size.
@@ -62,11 +62,7 @@ impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruReplacer<K, V> {
                 self.size -= cache_value.size();
             }
         }
-        if !evicted_keys.is_empty() {
-            (true, Some(evicted_keys))
-        } else {
-            (true, None)
-        }
+        Some(evicted_keys)
     }
 
     fn peek_value(&self, key: &K) -> Option<&V> {
@@ -83,7 +79,7 @@ impl DataStoreReplacer for LruReplacer<ParpulseDataStoreCacheKey, ParpulseDataSt
         &mut self,
         key: ParpulseDataStoreCacheKey,
         value: ParpulseDataStoreCacheValue,
-    ) -> (bool, Option<Vec<ParpulseDataStoreCacheKey>>) {
+    ) -> Option<Vec<ParpulseDataStoreCacheKey>> {
         self.put_value(key, value)
     }
 
