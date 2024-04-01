@@ -29,6 +29,11 @@ pub struct MemDiskStoreCache<R: DataStoreReplacer> {
     mem_replacer: Option<RwLock<R>>,
 }
 
+/// This method creates a `MemDiskStoreCache` instance, and memory can be disabled by setting
+/// `mem_replacer` to `None`.
+/// If one file is larger than `mem_max_file_size`, we will not write it into memory. And all the files
+/// in the memory cannot exceed the `maximum_capacity` of the memory replacer.
+/// Ideally, mem_max_file_size should always be less than or equal to the maximum capacity of the memory.
 impl<R: DataStoreReplacer> MemDiskStoreCache<R> {
     pub fn new(
         disk_replacer: R,
@@ -40,8 +45,17 @@ impl<R: DataStoreReplacer> MemDiskStoreCache<R> {
         let disk_store = DiskStore::new(disk_manager, disk_base_path);
 
         if mem_replacer.is_some() {
-            let mem_store =
-                MemStore::new(mem_max_file_size.unwrap_or(DEFAULT_MEM_CACHE_MAX_FILE_SIZE));
+            let mut mem_max_file_size =
+                mem_max_file_size.unwrap_or(DEFAULT_MEM_CACHE_MAX_FILE_SIZE);
+            let replacer_max_capacity = mem_replacer.as_ref().unwrap().max_capacity();
+            if mem_max_file_size > replacer_max_capacity {
+                // TODO: better log.
+                println!("The maximum file size > replacer's max capacity, so we set maximum file size = 1/5 of the maximum capacity.");
+                // By default in this case, replacer can at least 5 files.
+                mem_max_file_size = replacer_max_capacity / 5;
+            }
+
+            let mem_store = MemStore::new(mem_max_file_size);
             MemDiskStoreCache {
                 disk_store,
                 mem_store: Some(mem_store),
@@ -113,7 +127,7 @@ impl<R: DataStoreReplacer> DataStoreCache for MemDiskStoreCache<R> {
                 match data_stream.next().await {
                     Some(Ok(bytes)) => {
                         bytes_mem_written += bytes.len();
-                        // Need to write the data to network.
+                        // TODO: Need to write the data to network.
                         if let Some((bytes_vec, _)) =
                             mem_store.write_data(remote_location.clone(), bytes)
                         {
@@ -264,7 +278,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_mixed_disk_only() {
+    async fn test_put_get_disk_only() {
         let tmp = tempfile::tempdir().unwrap();
         let disk_base_path = tmp.path().to_owned();
         let mut cache = MemDiskStoreCache::new(
@@ -309,7 +323,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_mixed_mem_disk() {
+    async fn test_put_get_mem_disk() {
         // 1. put a small file (-> memory)
         // 2. put a large file (-> disk)
         // 3. get the small file

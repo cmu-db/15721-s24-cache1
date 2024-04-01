@@ -1,3 +1,5 @@
+use std::vec;
+
 use crate::{
     cache::data_store_cache::DataStoreCache,
     error::{ParpulseError, ParpulseResult},
@@ -22,17 +24,12 @@ impl<C: DataStoreCache> StorageManager<C> {
         Self { data_store_cache }
     }
 
-    // In dummy function, we assume request = bucket:key0+key1+...
+    // In dummy function, we assume request = bucket:key
     // TODO(lanlou): When we change dummy_s3_request, we should also change tests
     fn dummy_s3_request(&self, request: String) -> (String, Vec<String>) {
         let mut iter = request.split(':');
         let bucket = iter.next().unwrap().to_string();
-        let keys = iter
-            .next()
-            .unwrap()
-            .split('+')
-            .map(|s| s.to_string())
-            .collect();
+        let keys = vec![iter.next().unwrap().to_string()];
         (bucket, keys)
     }
 
@@ -113,19 +110,19 @@ mod tests {
             MemDiskStoreCache::new(cache, cache_base_path.display().to_string(), None, None);
         let mut storage_manager = StorageManager::new(data_store_cache);
 
-        let request_path = "tests-parquet:userdata1.parquet+userdata2.parquet";
+        let request_path = "tests-parquet:userdata1.parquet";
         let request = RequestParams::S3(request_path.to_string());
 
         let mut start_time = Instant::now();
         let result = storage_manager.get_data(request.clone()).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 113629 + 112193);
+        assert_eq!(result.unwrap(), 113629);
         let delta_time_miss = Instant::now() - start_time;
 
         start_time = Instant::now();
         let result = storage_manager.get_data(request).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 113629 + 112193);
+        assert_eq!(result.unwrap(), 113629);
         let delta_time_hit = Instant::now() - start_time;
 
         println!(
@@ -164,18 +161,18 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 930);
 
-        let request_path_large = "tests-parquet:userdata1.parquet+userdata2.parquet";
+        let request_path_large = "tests-parquet:userdata2.parquet";
         let request_large = RequestParams::S3(request_path_large.to_string());
 
         let result = storage_manager.get_data(request_large.clone()).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 113629 + 112193);
+        assert_eq!(result.unwrap(), 112193);
 
         // Get data again.
         let mut start_time = Instant::now();
         let result = storage_manager.get_data(request_large).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 113629 + 112193);
+        assert_eq!(result.unwrap(), 112193);
         let delta_time_hit_disk = Instant::now() - start_time;
 
         start_time = Instant::now();

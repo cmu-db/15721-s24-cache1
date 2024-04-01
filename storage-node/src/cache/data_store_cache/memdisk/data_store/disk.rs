@@ -32,6 +32,8 @@ impl DiskStore {
 }
 
 impl DiskStore {
+    /// Reads data from the disk store. The method returns a stream of data read from the disk
+    /// store.
     pub async fn read_data(
         &self,
         key: &str,
@@ -58,6 +60,9 @@ impl DiskStore {
         Ok(Some(rx))
     }
 
+    /// Writes data to the disk store. The method accepts a stream of data to write to the disk
+    /// store.
+    /// TODO: We may need to push the response writer down to the disk store as well.
     pub async fn write_data(
         &self,
         key: String,
@@ -72,10 +77,12 @@ impl DiskStore {
         Ok(bytes_written)
     }
 
+    /// Cleans the data from the disk store.
     pub async fn clean_data(&self, key: &str) -> ParpulseResult<()> {
         self.disk_manager.remove_file(key).await
     }
 
+    /// Returns the key for the disk store. The key should be cached in the disk store cache.
     pub fn data_store_key(&self, remote_location: &str) -> String {
         format!("{}{}", self.base_path, remote_location)
     }

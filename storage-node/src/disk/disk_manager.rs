@@ -78,12 +78,20 @@ impl DiskManager {
         Ok(Box::pin(disk_read_stream))
     }
 
-    // FIXME: disk_path should not exist, otherwise throw an error
-    // TODO(lanlou): we must handle write-write conflict correctly in the furture.
-    // One way is using `write commit` to handle read-write conflict, then there is no w-w conflict.
-    // TODO(lanlou): We need to write data to disk & send data to network at the same time.
-    // TOOD(lanlou): S3 stream now returns 10^5 bytes one time, and do we need to group all the bytes for
-    // one file and write all of them to disk at once?
+    /// This function will try to **first** write `bytes_vec` to disk if applicable, and write all the (remaining)
+    /// data polled from the `stream` to disk. The function will return the total bytes written to disk.
+    ///
+    /// Note these in current implementation:
+    /// 1. When writing evicted data from memory cache, bytes_vec should be Some and stream should be None.
+    /// 2. When memory cache is disabled, bytes_vec should be None and stream should be Some.
+    /// 3. When writing data which cannot be written to memory cache, both bytes_vec and stream should be Some.
+    ///
+    /// FIXME: disk_path should not exist, otherwise throw an error
+    /// TODO(lanlou): we must handle write-write conflict correctly in the future.
+    /// One way is using `write commit` to handle read-write conflict, then there is no w-w conflict.
+    /// TODO(lanlou): We need to write data to disk & send data to network at the same time.
+    /// TODO(lanlou): S3 stream now returns 10^5 bytes one time, and do we need to group all the bytes for
+    /// one file and write all of them to disk at once?
     pub async fn write_bytes_and_stream_to_disk(
         &self,
         bytes_vec: Option<Vec<Bytes>>,
