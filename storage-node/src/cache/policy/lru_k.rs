@@ -76,7 +76,7 @@ impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruKCache<K, V> {
         }
         if found {
             if let Some(key) = key_to_evict {
-                println!("-------- Evicting Key: {:?} --------", key);
+                // println!("-------- Evicting Key: {:?} --------", key); // Should have better logging
                 if let Some(node) = self.cache_map.remove(&key) {
                     self.size -= node.value.size();
                 }
@@ -118,20 +118,22 @@ impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruKCache<K, V> {
             return false;
         }
         let updated_size = value.size();
+        let mut new_history: VecDeque<Timestamp> = VecDeque::new();
         if let Some(mut node) = self.cache_map.remove(&key) {
             self.record_access(&mut node);
             self.size -= node.value.size();
-            self.cache_map.insert(key.clone(), node);
+            new_history = node.history;
         } else {
-            self.cache_map.insert(
-                key.clone(),
-                LruKNode {
-                    value,
-                    history: vec![self.curr_timestamp].into(),
-                },
-            );
+            new_history.push_back(self.curr_timestamp);
             self.curr_timestamp += 1;
         }
+        self.cache_map.insert(
+            key.clone(),
+            LruKNode {
+                value,
+                history: new_history,
+            },
+        );
         self.size += updated_size;
         while self.size > self.max_capacity {
             let key_to_evict = self.evict(&key);
@@ -289,5 +291,23 @@ mod tests {
         assert_eq!(cache.get(&key2), None);
         assert_eq!(cache.get(&key3), None);
         assert_eq!(cache.size(), 4); // Only key4 should be in the cache
+    }
+
+    #[test]
+    fn test_put_same_key() {
+        let mut cache =
+            LruKCache::<ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue>::new(10, 2);
+        cache.put("key1".to_string(), ("value1".to_string(), 1));
+        cache.put("key1".to_string(), ("value2".to_string(), 2));
+        cache.put("key1".to_string(), ("value3".to_string(), 3));
+        cache.put("key1".to_string(), ("value3".to_string(), 4));
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.size(), 4);
+        cache.put("key1".to_string(), ("value4".to_string(), 100)); // Should not be inserted
+        assert_eq!(
+            cache.get(&"key1".to_string()),
+            Some(&("value3".to_string(), 4))
+        );
+        assert_eq!(cache.get(&("key2".to_string())), None);
     }
 }
