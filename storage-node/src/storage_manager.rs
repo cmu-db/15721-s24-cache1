@@ -31,15 +31,6 @@ impl<C: DataStoreCache, DS: DataStore> StorageManager<C, DS> {
         }
     }
 
-    fn dummy_s3_request(&self) -> (String, Vec<String>) {
-        let bucket = "tests-parquet".to_string();
-        let keys = vec![
-            "userdata1.parquet".to_string(),
-            "userdata2.parquet".to_string(),
-        ];
-        (bucket, keys)
-    }
-
     pub async fn get_data(
         &self,
         _request: RequestParams,
@@ -49,7 +40,10 @@ impl<C: DataStoreCache, DS: DataStore> StorageManager<C, DS> {
         // the underlying storage.
         // 3. If needed, update the cache with the data fetched from the storage reader.
         // TODO: Support more request types.
-        let (bucket, keys) = self.dummy_s3_request();
+        let (bucket, keys) = match _request {
+            RequestParams::S3((bucket, keys)) => (bucket, keys),
+            _ => unreachable!(),
+        };
 
         // FIXME: Cache key should be <bucket + key>. Might refactor the underlying S3
         // reader as one S3 key for one reader.
@@ -135,8 +129,12 @@ mod tests {
         );
         let storage_manager = StorageManager::new(cache, data_store);
 
-        let request_path = "dummy_s3_request";
-        let request = RequestParams::S3(request_path.to_string());
+        let bucket = "tests-parquet".to_string();
+        let keys = vec![
+            "userdata1.parquet".to_string(),
+            "userdata2.parquet".to_string(),
+        ];
+        let request = RequestParams::S3((bucket, keys));
 
         let mut start_time = Instant::now();
         let result = storage_manager.get_data(request.clone()).await;
