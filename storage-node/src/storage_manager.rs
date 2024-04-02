@@ -40,7 +40,10 @@ impl<C: DataStoreCache, DS: DataStore> StorageManager<C, DS> {
         (bucket, keys)
     }
 
-    pub async fn get_data(&self, _request: RequestParams) -> ParpulseResult<usize> {
+    pub async fn get_data(
+        &self,
+        _request: RequestParams,
+    ) -> ParpulseResult<Receiver<ParpulseResult<Bytes>>> {
         // 1. Try to get data from the cache first.
         // 2. If cache miss, then go to storage reader to fetch the data from
         // the underlying storage.
@@ -51,26 +54,14 @@ impl<C: DataStoreCache, DS: DataStore> StorageManager<C, DS> {
         // FIXME: Cache key should be <bucket + key>. Might refactor the underlying S3
         // reader as one S3 key for one reader.
         let data_rx = self.get_data_from_cache(bucket.clone()).await?;
-        if let Some(mut data_rx) = data_rx {
-            let mut data_size: usize = 0;
-            while let Some(data) = data_rx.recv().await {
-                match data {
-                    Ok(bytes) => {
-                        // TODO: Put the data into network. May need to push down the response
-                        // stream to data store.
-                        data_size += bytes.len();
-                    }
-                    Err(e) => return Err(e),
-                }
-            }
-            Ok(data_size)
+        if let Some(data_rx) = data_rx {
+            Ok(data_rx)
         } else {
-            // Get data from the underlying storage and put the data into the cache.
             let reader = MockS3Reader::new(bucket.clone(), keys).await;
-            let data_size = self
-                .put_data_to_cache(bucket, reader.into_stream().await?)
-                .await?;
-            Ok(data_size)
+            let stream = reader.into_stream().await?;
+            self.put_data_to_cache(bucket.clone(), stream).await?;
+            let data_rx = self.get_data_from_cache(bucket).await?.unwrap();
+            Ok(data_rx)
         }
     }
 
@@ -150,13 +141,33 @@ mod tests {
         let mut start_time = Instant::now();
         let result = storage_manager.get_data(request.clone()).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 113629 + 112193);
+        let mut data_rx = result.unwrap();
+        let mut total_bytes = 0;
+        while let Some(data) = data_rx.recv().await {
+            match data {
+                Ok(bytes) => {
+                    total_bytes += bytes.len();
+                }
+                Err(e) => panic!("Error receiving data: {:?}", e),
+            }
+        }
+        assert_eq!(total_bytes, 113629 + 112193);
         let delta_time_miss = Instant::now() - start_time;
 
         start_time = Instant::now();
         let result = storage_manager.get_data(request).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 113629 + 112193);
+        let mut data_rx = result.unwrap();
+        total_bytes = 0;
+        while let Some(data) = data_rx.recv().await {
+            match data {
+                Ok(bytes) => {
+                    total_bytes += bytes.len();
+                }
+                Err(e) => panic!("Error receiving data: {:?}", e),
+            }
+        }
+        assert_eq!(total_bytes, 113629 + 112193);
         let delta_time_hit = Instant::now() - start_time;
 
         println!(
