@@ -54,7 +54,8 @@ impl<C: DataStoreCache, DS: DataStore> StorageManager<C, DS> {
             let reader = MockS3Reader::new(bucket.clone(), keys).await;
             let stream = reader.into_stream().await?;
             self.put_data_to_cache(bucket.clone(), stream).await?;
-            let data_rx = self.get_data_from_cache(bucket).await?.unwrap();
+            // TODO (kunle): Push down the response writer rather than calling get_data_from_cache again.
+            let data_rx = self.get_data_from_cache(bucket.clone()).await?.unwrap();
             Ok(data_rx)
         }
     }
