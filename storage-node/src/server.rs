@@ -1,3 +1,5 @@
+use futures::lock::Mutex;
+use std::sync::Arc;
 use storage_common::RequestParams;
 use tokio_stream::wrappers::ReceiverStream;
 use warp::{Filter, Rejection};
@@ -13,25 +15,24 @@ use crate::{
 const CACHE_BASE_PATH: &str = "cache/";
 
 pub async fn storage_node_serve() -> ParpulseResult<()> {
-    // TODO: Read the type of the cache from config.
     let dummy_size = 1000000;
+    // TODO: Read the type of the cache from config.
+    let cache = LruReplacer::new(dummy_size);
+    // TODO: cache_base_path should be from config
+    let data_store_cache = MemDiskStoreCache::new(cache, CACHE_BASE_PATH.to_string(), None, None);
+    // TODO: try to use more fine-grained lock instead of locking the whole storage_manager
+    let storage_manager = Arc::new(Mutex::new(StorageManager::new(data_store_cache)));
 
-    // FIXME (kunle): We need to get the file from storage manager. For now we directly read
-    // the file from disk. I will update it after the storage manager provides the relevant API.
     let route = warp::path!("file" / String)
         .and(warp::path::end())
         .and_then(move |file_name: String| {
+            let storage_manager = storage_manager.clone();
             async move {
-                let cache = LruReplacer::new(dummy_size);
-                // TODO: cache_base_path should be from config
-                let data_store_cache =
-                    MemDiskStoreCache::new(cache, CACHE_BASE_PATH.to_string(), None, None);
-                let mut storage_manager = StorageManager::new(data_store_cache);
                 println!("File Name: {}", file_name);
                 let bucket = "tests-parquet".to_string();
                 let keys = vec![file_name];
                 let request = RequestParams::S3((bucket, keys));
-                let result = storage_manager.get_data(request).await;
+                let result = storage_manager.lock().await.get_data(request).await;
                 let data_rx = result.unwrap();
 
                 let stream = ReceiverStream::new(data_rx);
