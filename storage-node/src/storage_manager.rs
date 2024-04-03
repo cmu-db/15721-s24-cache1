@@ -1,12 +1,12 @@
-use std::vec;
-
 use crate::{
     cache::data_store_cache::DataStoreCache,
-    error::{ParpulseError, ParpulseResult},
+    error::ParpulseResult,
     storage_reader::{s3_diskmock::MockS3Reader, AsyncStorageReader},
 };
 
+use bytes::Bytes;
 use storage_common::RequestParams;
+use tokio::sync::mpsc::Receiver;
 
 /// [`StorageManager`] handles the request from the storage client.
 ///
@@ -24,58 +24,34 @@ impl<C: DataStoreCache> StorageManager<C> {
         Self { data_store_cache }
     }
 
-    // In dummy function, we assume request = bucket:key
-    // TODO(lanlou): When we change dummy_s3_request, we should also change tests
-    fn dummy_s3_request(&self, request: String) -> (String, Vec<String>) {
-        let mut iter = request.split(':');
-        let bucket = iter.next().unwrap().to_string();
-        let keys = vec![iter.next().unwrap().to_string()];
-        (bucket, keys)
-    }
-
-    pub async fn get_data(&mut self, request: RequestParams) -> ParpulseResult<usize> {
+    pub async fn get_data(
+        &mut self,
+        request: RequestParams,
+    ) -> ParpulseResult<Receiver<ParpulseResult<Bytes>>> {
         // 1. Try to get data from the cache first.
         // 2. If cache miss, then go to storage reader to fetch the data from
         // the underlying storage.
         // 3. If needed, update the cache with the data fetched from the storage reader.
         // TODO: Support more request types.
-        let request = match request {
-            RequestParams::S3(request) => request,
-            _ => {
-                return Err(ParpulseError::Internal(
-                    "Unsupported request types".to_string(),
-                ))
-            }
+        let (bucket, keys) = match request {
+            RequestParams::S3((bucket, keys)) => (bucket, keys),
+            _ => unreachable!(),
         };
-        let (bucket, keys) = self.dummy_s3_request(request.clone());
 
         // FIXME: Cache key should be <bucket + key>. Might refactor the underlying S3
         // reader as one S3 key for one reader.
-        let data_rx = self
-            .data_store_cache
-            .get_data_from_cache(request.clone())
-            .await?;
-        if let Some(mut data_rx) = data_rx {
-            let mut data_size: usize = 0;
-            while let Some(data) = data_rx.recv().await {
-                match data {
-                    Ok(bytes) => {
-                        // TODO: Put the data into network. May need to push down the response
-                        // stream to data store.
-                        data_size += bytes.len();
-                    }
-                    Err(e) => return Err(e),
-                }
-            }
-            Ok(data_size)
+        // TODO(lanlou): if we change {}-{} to {}/{}, test_download_file in server.rs will fail.
+        let cache_key = format!("{}-{}", bucket, keys.join(","));
+        let data_rx = self.data_store_cache.get_data_from_cache(cache_key.clone()).await?;
+        if let Some(data_rx) = data_rx {
+            Ok(data_rx)
         } else {
-            // Get data from the underlying storage and put the data into the cache.
             let reader = MockS3Reader::new(bucket.clone(), keys).await;
-            let data_size = self
-                .data_store_cache
-                .put_data_to_cache(request, reader.into_stream().await?)
-                .await?;
-            Ok(data_size)
+            let stream = reader.into_stream().await?;
+            self.data_store_cache.put_data_to_cache(cache_key.clone(), stream).await?;
+            // TODO (kunle): Push down the response writer rather than calling get_data_from_cache again.
+            let data_rx = self.data_store_cache.get_data_from_cache(cache_key.clone()).await?.unwrap();
+            Ok(data_rx)
         }
     }
 }
@@ -97,6 +73,19 @@ mod tests {
 
     use super::*;
 
+    async fn consume_receiver(mut rx: Receiver<ParpulseResult<Bytes>>) -> usize {
+        let mut total_bytes = 0;
+        while let Some(data) = rx.recv().await {
+            match data {
+                Ok(bytes) => {
+                    total_bytes += bytes.len();
+                }
+                Err(e) => panic!("Error receiving data: {:?}", e),
+            }
+        }
+        total_bytes
+    }
+
     #[tokio::test]
     async fn test_storage_manager_disk_only() {
         let dummy_size = 1000000;
@@ -110,19 +99,33 @@ mod tests {
             MemDiskStoreCache::new(cache, cache_base_path.display().to_string(), None, None);
         let mut storage_manager = StorageManager::new(data_store_cache);
 
-        let request_path = "tests-parquet:userdata1.parquet";
-        let request = RequestParams::S3(request_path.to_string());
+        let bucket = "tests-parquet".to_string();
+        let keys = vec![
+            "userdata1.parquet".to_string(),
+        ];
+        let request = RequestParams::S3((bucket, keys));
 
         let mut start_time = Instant::now();
         let result = storage_manager.get_data(request.clone()).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 113629);
+        let mut data_rx = result.unwrap();
+        let mut total_bytes = 0;
+        while let Some(data) = data_rx.recv().await {
+            match data {
+                Ok(bytes) => {
+                    total_bytes += bytes.len();
+                }
+                Err(e) => panic!("Error receiving data: {:?}", e),
+            }
+        }
+        assert_eq!(total_bytes, 113629);
         let delta_time_miss = Instant::now() - start_time;
 
         start_time = Instant::now();
         let result = storage_manager.get_data(request).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 113629);
+        let data_rx = result.unwrap();
+        assert_eq!(consume_receiver(data_rx).await, 113629);
         let delta_time_hit = Instant::now() - start_time;
 
         println!(
@@ -154,31 +157,37 @@ mod tests {
         );
         let mut storage_manager = StorageManager::new(data_store_cache);
 
-        let request_path_small = "tests-text:what-can-i-hold-you-with";
-        let request_small = RequestParams::S3(request_path_small.to_string());
+        let request_path_small_bucket = "tests-text".to_string();
+        let request_path_small_keys = vec![
+            "what-can-i-hold-you-with".to_string(),
+        ];
+        let request_small = RequestParams::S3((request_path_small_bucket, request_path_small_keys));
 
         let result = storage_manager.get_data(request_small.clone()).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 930);
+        assert_eq!(consume_receiver(result.unwrap()).await, 930);
 
-        let request_path_large = "tests-parquet:userdata2.parquet";
-        let request_large = RequestParams::S3(request_path_large.to_string());
+        let request_path_large_bucket = "tests-parquet".to_string();
+        let request_path_large_keys = vec![
+            "userdata2.parquet".to_string(),
+        ];
+        let request_large = RequestParams::S3((request_path_large_bucket, request_path_large_keys));
 
         let result = storage_manager.get_data(request_large.clone()).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 112193);
+        assert_eq!(consume_receiver(result.unwrap()).await, 112193);
 
         // Get data again.
         let mut start_time = Instant::now();
         let result = storage_manager.get_data(request_large).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 112193);
+        assert_eq!(consume_receiver(result.unwrap()).await, 112193);
         let delta_time_hit_disk = Instant::now() - start_time;
 
         start_time = Instant::now();
         let result = storage_manager.get_data(request_small).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 930);
+        assert_eq!(consume_receiver(result.unwrap()).await, 930);
         let delta_time_hit_mem = Instant::now() - start_time;
 
         println!(
@@ -209,31 +218,37 @@ mod tests {
         );
         let mut storage_manager = StorageManager::new(data_store_cache);
 
-        let request_path_data1 = "tests-parquet:userdata1.parquet";
-        let request_data1 = RequestParams::S3(request_path_data1.to_string());
+        let request_path_bucket1 = "tests-parquet".to_string();
+        let request_path_keys1 = vec![
+            "userdata1.parquet".to_string(),
+        ];
+        let request_data1 = RequestParams::S3((request_path_bucket1, request_path_keys1));
 
         let result = storage_manager.get_data(request_data1.clone()).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 113629);
+        assert_eq!(consume_receiver(result.unwrap()).await, 113629);
 
-        let request_path_data2 = "tests-parquet:userdata2.parquet";
-        let request_data2 = RequestParams::S3(request_path_data2.to_string());
+        let request_path_bucket2 = "tests-parquet".to_string();
+        let request_path_keys2 = vec![
+            "userdata2.parquet".to_string(),
+        ];
+        let request_data2 = RequestParams::S3((request_path_bucket2, request_path_keys2));
 
         let result = storage_manager.get_data(request_data2.clone()).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 112193);
+        assert_eq!(consume_receiver(result.unwrap()).await, 112193);
 
         // Get data again. Now data2 in memory and data1 in disk.
         let mut start_time = Instant::now();
         let result = storage_manager.get_data(request_data1).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 113629);
+        assert_eq!(consume_receiver(result.unwrap()).await, 113629);
         let delta_time_hit_disk = Instant::now() - start_time;
 
         start_time = Instant::now();
         let result = storage_manager.get_data(request_data2).await;
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 112193);
+        assert_eq!(consume_receiver(result.unwrap()).await, 112193);
         let delta_time_hit_mem = Instant::now() - start_time;
 
         println!(
