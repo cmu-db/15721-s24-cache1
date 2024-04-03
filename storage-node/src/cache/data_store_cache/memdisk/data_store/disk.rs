@@ -1,3 +1,5 @@
+use std::fs;
+
 use bytes::Bytes;
 use futures::StreamExt;
 use tokio::sync::mpsc::Receiver;
@@ -15,6 +17,12 @@ pub struct DiskStore {
     disk_manager: DiskManager,
     /// The path to the directory where the data is stored on the disk.
     base_path: String,
+}
+
+impl Drop for DiskStore {
+    fn drop(&mut self) {
+        fs::remove_dir_all(self.base_path.clone()).expect("remove cache files failed");
+    }
 }
 
 impl DiskStore {

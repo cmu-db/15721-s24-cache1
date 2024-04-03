@@ -102,9 +102,6 @@ mod tests {
             fs::metadata(file_path).unwrap().len()
         );
 
-        // TODO(lanlou): should have other way to delete cache files, when disk_manager not exist
-        fs::remove_dir_all(CACHE_BASE_PATH).expect("remove cache files failed");
-
         server_handle.abort();
     }
 }
