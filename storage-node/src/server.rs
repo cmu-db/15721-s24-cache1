@@ -5,7 +5,9 @@ use warp::{Filter, Rejection};
 use crate::{
     cache::{
         data_store_cache::memdisk::cache_manager::MemDiskStoreCache, policy::lru::LruReplacer,
-    }, error::ParpulseResult, storage_manager::StorageManager
+    },
+    error::ParpulseResult,
+    storage_manager::StorageManager,
 };
 
 const CACHE_BASE_PATH: &str = "cache/";
@@ -22,7 +24,8 @@ pub async fn storage_node_serve() -> ParpulseResult<()> {
             async move {
                 let cache = LruReplacer::new(dummy_size);
                 // TODO: cache_base_path should be from config
-                let data_store_cache = MemDiskStoreCache::new(cache, CACHE_BASE_PATH.to_string(), None, None);
+                let data_store_cache =
+                    MemDiskStoreCache::new(cache, CACHE_BASE_PATH.to_string(), None, None);
                 let mut storage_manager = StorageManager::new(data_store_cache);
                 println!("File Name: {}", file_name);
                 let bucket = "tests-parquet".to_string();

@@ -42,15 +42,24 @@ impl<C: DataStoreCache> StorageManager<C> {
         // reader as one S3 key for one reader.
         // TODO(lanlou): if we change {}-{} to {}/{}, test_download_file in server.rs will fail.
         let cache_key = format!("{}-{}", bucket, keys.join(","));
-        let data_rx = self.data_store_cache.get_data_from_cache(cache_key.clone()).await?;
+        let data_rx = self
+            .data_store_cache
+            .get_data_from_cache(cache_key.clone())
+            .await?;
         if let Some(data_rx) = data_rx {
             Ok(data_rx)
         } else {
             let reader = MockS3Reader::new(bucket.clone(), keys).await;
             let stream = reader.into_stream().await?;
-            self.data_store_cache.put_data_to_cache(cache_key.clone(), stream).await?;
+            self.data_store_cache
+                .put_data_to_cache(cache_key.clone(), stream)
+                .await?;
             // TODO (kunle): Push down the response writer rather than calling get_data_from_cache again.
-            let data_rx = self.data_store_cache.get_data_from_cache(cache_key.clone()).await?.unwrap();
+            let data_rx = self
+                .data_store_cache
+                .get_data_from_cache(cache_key.clone())
+                .await?
+                .unwrap();
             Ok(data_rx)
         }
     }
@@ -100,9 +109,7 @@ mod tests {
         let mut storage_manager = StorageManager::new(data_store_cache);
 
         let bucket = "tests-parquet".to_string();
-        let keys = vec![
-            "userdata1.parquet".to_string(),
-        ];
+        let keys = vec!["userdata1.parquet".to_string()];
         let request = RequestParams::S3((bucket, keys));
 
         let mut start_time = Instant::now();
@@ -158,9 +165,7 @@ mod tests {
         let mut storage_manager = StorageManager::new(data_store_cache);
 
         let request_path_small_bucket = "tests-text".to_string();
-        let request_path_small_keys = vec![
-            "what-can-i-hold-you-with".to_string(),
-        ];
+        let request_path_small_keys = vec!["what-can-i-hold-you-with".to_string()];
         let request_small = RequestParams::S3((request_path_small_bucket, request_path_small_keys));
 
         let result = storage_manager.get_data(request_small.clone()).await;
@@ -168,9 +173,7 @@ mod tests {
         assert_eq!(consume_receiver(result.unwrap()).await, 930);
 
         let request_path_large_bucket = "tests-parquet".to_string();
-        let request_path_large_keys = vec![
-            "userdata2.parquet".to_string(),
-        ];
+        let request_path_large_keys = vec!["userdata2.parquet".to_string()];
         let request_large = RequestParams::S3((request_path_large_bucket, request_path_large_keys));
 
         let result = storage_manager.get_data(request_large.clone()).await;
@@ -219,9 +222,7 @@ mod tests {
         let mut storage_manager = StorageManager::new(data_store_cache);
 
         let request_path_bucket1 = "tests-parquet".to_string();
-        let request_path_keys1 = vec![
-            "userdata1.parquet".to_string(),
-        ];
+        let request_path_keys1 = vec!["userdata1.parquet".to_string()];
         let request_data1 = RequestParams::S3((request_path_bucket1, request_path_keys1));
 
         let result = storage_manager.get_data(request_data1.clone()).await;
@@ -229,9 +230,7 @@ mod tests {
         assert_eq!(consume_receiver(result.unwrap()).await, 113629);
 
         let request_path_bucket2 = "tests-parquet".to_string();
-        let request_path_keys2 = vec![
-            "userdata2.parquet".to_string(),
-        ];
+        let request_path_keys2 = vec!["userdata2.parquet".to_string()];
         let request_data2 = RequestParams::S3((request_path_bucket2, request_path_keys2));
 
         let result = storage_manager.get_data(request_data2.clone()).await;
