@@ -78,14 +78,24 @@ impl DiskManager {
         Ok(Box::pin(disk_read_stream))
     }
 
-    // FIXME: disk_path should not exist, otherwise throw an error
-    // TODO: we must handle write-write conflict correctly in the furture.
-    // One way is using `write commit` to handle read-write conflict, then there is no w-w conflict.
-    // TODO: we should write to disk & network at the same time. Maybe we can implement another `AsyncWriter`
-    // have method of `poll_write`, then we don't need to put this logic in the `disk_manager`.
-    pub async fn write_stream_reader_to_disk(
+    /// This function will try to **first** write `bytes_vec` to disk if applicable, and write all the (remaining)
+    /// data polled from the `stream` to disk. The function will return the total bytes written to disk.
+    ///
+    /// Note these in current implementation:
+    /// 1. When writing evicted data from memory cache, bytes_vec should be Some and stream should be None.
+    /// 2. When memory cache is disabled, bytes_vec should be None and stream should be Some.
+    /// 3. When writing data which cannot be written to memory cache, both bytes_vec and stream should be Some.
+    ///
+    /// FIXME: disk_path should not exist, otherwise throw an error
+    /// TODO(lanlou): we must handle write-write conflict correctly in the future.
+    /// One way is using `write commit` to handle read-write conflict, then there is no w-w conflict.
+    /// TODO(lanlou): We need to write data to disk & send data to network at the same time.
+    /// TODO(lanlou): S3 stream now returns 10^5 bytes one time, and do we need to group all the bytes for
+    /// one file and write all of them to disk at once?
+    pub async fn write_bytes_and_stream_to_disk(
         &self,
-        mut stream: StorageReaderStream,
+        bytes_vec: Option<Vec<Bytes>>,
+        stream: Option<StorageReaderStream>,
         disk_path: &str,
     ) -> ParpulseResult<usize> {
         if Path::new(disk_path).exists() {
@@ -97,14 +107,24 @@ impl DiskManager {
         }
         let mut file = self.open_or_create(disk_path, true).await?;
         let mut bytes_written = 0;
-        loop {
-            match stream.next().await {
-                Some(Ok(bytes)) => {
-                    file.write_all(&bytes).await?;
-                    bytes_written += bytes.len();
+
+        if let Some(bytes_vec) = bytes_vec {
+            for bytes in bytes_vec {
+                file.write_all(&bytes).await?;
+                bytes_written += bytes.len();
+            }
+        }
+
+        if let Some(mut stream) = stream {
+            loop {
+                match stream.next().await {
+                    Some(Ok(bytes)) => {
+                        file.write_all(&bytes).await?;
+                        bytes_written += bytes.len();
+                    }
+                    Some(Err(e)) => return Err(e),
+                    None => break,
                 }
-                Some(Err(e)) => return Err(e),
-                None => break,
             }
         }
         // FIXME: do we need a flush here?
@@ -219,13 +239,80 @@ mod tests {
             .write_disk_all(path, content.as_bytes())
             .await
             .expect("write_disk_all failed");
-        let stream = RandomDiskReadStream::new(path, 1, 2).unwrap().boxed();
+        let stream = RandomDiskReadStream::new(path, 2, 4).unwrap().boxed();
         let output_path = &dir
             .join("test_disk_manager3_output.txt")
             .display()
             .to_string();
         let bytes_written = disk_manager
-            .write_stream_reader_to_disk(stream, output_path)
+            .write_bytes_and_stream_to_disk(None, Some(stream), output_path)
+            .await
+            .expect("write_reader_to_disk failed");
+        assert_eq!(bytes_written, content.len());
+
+        let (bytes_read, bytes) = disk_manager
+            .read_disk_all(output_path)
+            .await
+            .expect("read_disk_all failed");
+        assert_eq!(bytes_read, content.len());
+        assert_eq!(bytes, Bytes::from(content));
+        let file_size = disk_manager
+            .file_size(output_path)
+            .await
+            .expect("file_size failed");
+        assert_eq!(file_size, content.len() as u64);
+    }
+
+    #[tokio::test]
+    async fn test_write_bytes_to_disk() {
+        let disk_manager = DiskManager {};
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_owned();
+        let path = &dir.join("test_disk_manager4.txt").display().to_string();
+        let content1 = "Hello, world!";
+        let content2 = "Bye, CMU!";
+        let bytes_written = disk_manager
+            .write_bytes_and_stream_to_disk(
+                Some(vec![Bytes::from(content1), Bytes::from(content2)]),
+                None,
+                path,
+            )
+            .await
+            .expect("write_bytes_to_disk failed");
+        assert_eq!(bytes_written, content1.len() + content2.len());
+        let (bytes_read, bytes) = disk_manager
+            .read_disk_all(path)
+            .await
+            .expect("read_disk_all failed");
+        assert_eq!(bytes_read, content1.len() + content2.len());
+        assert_eq!(bytes, Bytes::from(content1.to_owned() + content2));
+    }
+
+    #[tokio::test]
+    async fn test_write_bytes_and_stream_to_disk() {
+        let disk_manager = DiskManager {};
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_owned();
+        let path = &dir.join("test_disk_manager5.txt").display().to_string();
+        let content = "bhjoilkmnkbhaoijsdklmnjkbhiauosdjikbhjoilkmnkbhaoijsdklmnjkbhiauosdjik";
+        disk_manager
+            .write_disk_all(path, content.as_bytes())
+            .await
+            .expect("write_disk_all failed");
+        let mut stream = RandomDiskReadStream::new(path, 2, 4).unwrap().boxed();
+
+        let mut bytes_vec: Vec<Bytes> = Vec::new();
+        for _ in 0..3 {
+            let stream_data = stream.next().await.unwrap().unwrap();
+            bytes_vec.push(stream_data);
+        }
+
+        let output_path = &dir
+            .join("test_disk_manager5_output.txt")
+            .display()
+            .to_string();
+        let bytes_written = disk_manager
+            .write_bytes_and_stream_to_disk(Some(bytes_vec), Some(stream), output_path)
             .await
             .expect("write_reader_to_disk failed");
         assert_eq!(bytes_written, content.len());
@@ -248,7 +335,7 @@ mod tests {
         let disk_manager = DiskManager {};
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_owned();
-        let path = &dir.join("test_disk_manager4.txt").display().to_string();
+        let path = &dir.join("test_disk_manager6.txt").display().to_string();
         let content = "Hello, world!";
         disk_manager
             .write_disk_all(path, content.as_bytes())

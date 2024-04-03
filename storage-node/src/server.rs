@@ -3,11 +3,14 @@ use tokio_stream::wrappers::ReceiverStream;
 use warp::{Filter, Rejection};
 
 use crate::{
-    cache::{data::disk::DiskStore, policy::lru::LruCache},
-    disk::disk_manager::DiskManager,
+    cache::{
+        data_store_cache::memdisk::cache_manager::MemDiskStoreCache, policy::lru::LruReplacer,
+    },
     error::ParpulseResult,
     storage_manager::StorageManager,
 };
+
+const CACHE_BASE_PATH: &str = "cache/";
 
 pub async fn storage_node_serve() -> ParpulseResult<()> {
     // TODO: Read the type of the cache from config.
@@ -19,11 +22,11 @@ pub async fn storage_node_serve() -> ParpulseResult<()> {
         .and(warp::path::end())
         .and_then(move |file_name: String| {
             async move {
-                let cache = LruCache::new(dummy_size);
-                let disk_manager = DiskManager::default();
+                let cache = LruReplacer::new(dummy_size);
                 // TODO: cache_base_path should be from config
-                let data_store = DiskStore::new(disk_manager, "cache/".to_string());
-                let storage_manager = StorageManager::new(cache, data_store);
+                let data_store_cache =
+                    MemDiskStoreCache::new(cache, CACHE_BASE_PATH.to_string(), None, None);
+                let mut storage_manager = StorageManager::new(data_store_cache);
                 println!("File Name: {}", file_name);
                 let bucket = "tests-parquet".to_string();
                 let keys = vec![file_name];
@@ -98,6 +101,9 @@ mod tests {
             fs::metadata(original_file_path).unwrap().len(),
             fs::metadata(file_path).unwrap().len()
         );
+
+        // TODO(lanlou): should have other way to delete cache files, when disk_manager not exist
+        fs::remove_dir_all(CACHE_BASE_PATH).expect("remove cache files failed");
 
         server_handle.abort();
     }
