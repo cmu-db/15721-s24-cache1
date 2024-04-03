@@ -51,7 +51,7 @@ impl<R: DataStoreReplacer> MemDiskStoreCache<R> {
             if mem_max_file_size > replacer_max_capacity {
                 // TODO: better log.
                 println!("The maximum file size > replacer's max capacity, so we set maximum file size = 1/5 of the maximum capacity.");
-                // By default in this case, replacer can at least 5 files.
+                // By default in this case, replacer can store at least 5 files.
                 mem_max_file_size = replacer_max_capacity / 5;
             }
 
