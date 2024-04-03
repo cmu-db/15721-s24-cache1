@@ -1,4 +1,5 @@
 use std::{
+    env,
     pin::Pin,
     task::{Context, Poll},
     thread,
@@ -33,9 +34,20 @@ pub struct MockS3Reader {
 impl MockS3Reader {
     // Async here is to be consistent with S3Reader.
     pub async fn new(bucket: String, keys: Vec<String>) -> Self {
+        // Get the absolute path instead of relative path.
+        let base_path = env::current_dir()
+            .ok()
+            .and_then(|current_path| {
+                current_path
+                    .parent()
+                    .map(|root_path| root_path.join("storage-node"))
+            })
+            .and_then(|joined_path| joined_path.to_str().map(|s| s.to_string()))
+            .unwrap_or_default();
+
         let file_paths: Vec<String> = keys
             .iter()
-            .map(|key| format!("{}{}", bucket.replace('-', "/") + "/", key))
+            .map(|key| format!("{}/{}/{}", base_path, bucket.replace('-', "/"), key))
             .collect();
         MockS3Reader {
             file_paths,

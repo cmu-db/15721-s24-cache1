@@ -12,7 +12,7 @@ mod tests {
     use storage_node::server::storage_node_serve;
 
     #[tokio::test]
-    #[ignore = "Need to discuss how to set S3 params"]
+    // #[ignore = "Need to discuss how to set S3 params"]
     async fn test_client_server() {
         // The file dir should start from storage-node.
 
