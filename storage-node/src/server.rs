@@ -37,10 +37,10 @@ pub async fn storage_node_serve() -> ParpulseResult<()> {
                     .header("Content-Type", "text/plain")
                     .body(body)
                     .unwrap();
-                return Ok::<_, Rejection>(warp::reply::with_status(
+                Ok::<_, Rejection>(warp::reply::with_status(
                     response,
                     warp::http::StatusCode::OK,
-                ));
+                ))
             }
         });
 
