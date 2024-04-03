@@ -40,7 +40,6 @@ impl<C: DataStoreCache> StorageManager<C> {
 
         // FIXME: Cache key should be <bucket + key>. Might refactor the underlying S3
         // reader as one S3 key for one reader.
-        // TODO(lanlou): if we change {}-{} to {}/{}, test_download_file in server.rs will fail.
         let cache_key = format!("{}-{}", bucket, keys.join(","));
         let data_rx = self
             .data_store_cache
