@@ -20,6 +20,7 @@ pub async fn storage_node_serve() -> ParpulseResult<()> {
     let cache = LruReplacer::new(dummy_size);
     // TODO: cache_base_path should be from config
     let data_store_cache = MemDiskStoreCache::new(cache, CACHE_BASE_PATH.to_string(), None, None);
+    // TODO: try to use more fine-grained lock instead of locking the whole storage_manager
     let storage_manager = Arc::new(Mutex::new(StorageManager::new(data_store_cache)));
 
     let route = warp::path!("file" / String)
