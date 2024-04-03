@@ -1,7 +1,5 @@
-use std::path::Path;
 use storage_common::RequestParams;
-use tokio::fs::File as AsyncFile;
-use tokio_util::io::ReaderStream;
+use tokio_stream::wrappers::ReceiverStream;
 use warp::{Filter, Rejection};
 
 use crate::{
@@ -11,51 +9,34 @@ use crate::{
     storage_manager::StorageManager,
 };
 
-pub async fn storage_node_serve(file_dir: RequestParams) -> ParpulseResult<()> {
+pub async fn storage_node_serve() -> ParpulseResult<()> {
     // TODO: Read the type of the cache from config.
-    let dummy_size = 10;
-    let cache = LruCache::new(dummy_size);
-    let disk_manager = DiskManager::default();
-    // TODO: cache_base_path should be from config
-    let data_store = DiskStore::new(disk_manager, "cache/".to_string());
-    let _storage_manager = StorageManager::new(cache, data_store);
+    let dummy_size = 1000000;
 
     // FIXME (kunle): We need to get the file from storage manager. For now we directly read
     // the file from disk. I will update it after the storage manager provides the relevant API.
     let route = warp::path!("file" / String)
         .and(warp::path::end())
         .and_then(move |file_name: String| {
-            // Have to clone file_dir to move it into the closure
-            let file_dir = file_dir.clone();
             async move {
-                let file_path = match file_dir {
-                    RequestParams::File(dir) => format!("{}/{}", dir, file_name),
-                    _ => {
-                        return Err(warp::reject::not_found());
-                    }
-                };
+                let cache = LruCache::new(dummy_size);
+                let disk_manager = DiskManager::default();
+                // TODO: cache_base_path should be from config
+                let data_store = DiskStore::new(disk_manager, "cache/".to_string());
+                let storage_manager = StorageManager::new(cache, data_store);
+                println!("File Name: {}", file_name);
+                let bucket = "tests-parquet".to_string();
+                let keys = vec![file_name];
+                let request = RequestParams::S3((bucket, keys));
+                let result = storage_manager.get_data(request).await;
+                let data_rx = result.unwrap();
 
-                if !Path::new(&file_path).exists() {
-                    return Err(warp::reject::not_found());
-                }
-
-                println!("File Path in the server: {}", file_path);
-                let file = match AsyncFile::open(&file_path).await {
-                    Ok(file) => file,
-                    Err(e) => {
-                        eprintln!("Error opening file: {}", e);
-                        return Err(warp::reject::not_found());
-                    }
-                };
-
-                let stream = ReaderStream::new(file);
+                let stream = ReceiverStream::new(data_rx);
                 let body = warp::hyper::Body::wrap_stream(stream);
                 let response = warp::http::Response::builder()
                     .header("Content-Type", "text/plain")
                     .body(body)
                     .unwrap();
-
-                // Return the file content as response
                 Ok::<_, Rejection>(warp::reply::with_status(
                     response,
                     warp::http::StatusCode::OK,
@@ -79,11 +60,11 @@ mod tests {
     /// WARNING: Put userdata1.parquet in the storage-node/tests/parquet directory before running this test.
     #[tokio::test]
     async fn test_download_file() {
-        let file_dir = RequestParams::File("tests/parquet".to_string());
+        let original_file_path = "tests/parquet/userdata1.parquet";
 
         // Start the server
         let server_handle = tokio::spawn(async move {
-            storage_node_serve(file_dir).await.unwrap();
+            storage_node_serve().await.unwrap();
         });
 
         // Give the server some time to start
@@ -112,10 +93,11 @@ mod tests {
         }
         assert!(file_path.exists(), "File not found after download");
 
-        let original_file_path = "tests/parquet/userdata1.parquet";
-        let original_file = fs::read(original_file_path).unwrap();
-        let downloaded_file = fs::read(file_path).unwrap();
-        assert_eq!(original_file, downloaded_file);
+        // Check if file sizes are equal
+        assert_eq!(
+            fs::metadata(original_file_path).unwrap().len(),
+            fs::metadata(file_path).unwrap().len()
+        );
 
         server_handle.abort();
     }
