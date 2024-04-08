@@ -11,6 +11,6 @@ pub enum RequestParams {
 #[derive(Deserialize)]
 pub struct S3Request {
     pub bucket: String,
-    /// Cannot serialize a vector of strings, might need to customize a deserializer later.
+    /// Cannot deserialize a vector of strings, might need to customize a deserializer later.
     pub keys: String,
 }
