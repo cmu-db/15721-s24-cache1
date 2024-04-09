@@ -60,7 +60,7 @@ impl StorageClientImpl {
 impl StorageClient for StorageClientImpl {
     async fn request_data(&self, _request: StorageRequest) -> Result<Receiver<RecordBatch>> {
         // First we need to get the location of the parquet file from the catalog server.
-        let _location = match self.get_info_from_catalog(_request).await? {
+        let location = match self.get_info_from_catalog(_request).await? {
             RequestParams::S3(location) => location,
             _ => {
                 return Err(anyhow!(
@@ -72,7 +72,7 @@ impl StorageClient for StorageClientImpl {
         // Then we need to send the request to the storage server.
         let client = Client::new();
         let url = format!("{}file", self._storage_server_endpoint);
-        let params = [("bucket", _location.0), ("keys", _location.1.join(","))];
+        let params = [("bucket", location.0), ("keys", location.1.join(","))];
         let url = Url::parse_with_params(&url, params)?;
         let response = client.get(url).send().await?;
         if response.status().is_success() {
