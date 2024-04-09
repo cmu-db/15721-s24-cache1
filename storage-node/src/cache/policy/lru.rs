@@ -39,7 +39,7 @@ impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruReplacer<K, V> {
             // If the object size is greater than the max capacity, we do not insert the
             // object into the cache.
             // TODO(Yuanxin): Better logging approach.
-            warn!("Warning: The size of the value is greater than the max capacity",);
+            warn!("The size of the value is greater than the max capacity",);
             warn!(
                 "Key: {:?}, Value: {:?}, Value size: {:?}, Max capacity: {:?}",
                 key,
