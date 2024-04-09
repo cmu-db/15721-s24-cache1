@@ -1,5 +1,6 @@
 use hashlink::linked_hash_map;
 use hashlink::LinkedHashMap;
+use log::{debug, warn};
 
 use super::DataStoreCacheKey;
 use super::DataStoreCacheValue;
@@ -38,8 +39,8 @@ impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruReplacer<K, V> {
             // If the object size is greater than the max capacity, we do not insert the
             // object into the cache.
             // TODO(Yuanxin): Better logging approach.
-            println!("Warning: The size of the value is greater than the max capacity",);
-            println!(
+            warn!("Warning: The size of the value is greater than the max capacity",);
+            warn!(
                 "Key: {:?}, Value: {:?}, Value size: {:?}, Max capacity: {:?}",
                 key,
                 value.as_value(),
@@ -57,7 +58,7 @@ impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruReplacer<K, V> {
         let mut evicted_keys = Vec::new();
         while self.size > self.max_capacity {
             if let Some((key, cache_value)) = self.cache_map.pop_front() {
-                println!("-------- Evicting Key: {:?} --------", key);
+                debug!("-------- Evicting Key: {:?} --------", key);
                 evicted_keys.push(key);
                 self.size -= cache_value.size();
             }

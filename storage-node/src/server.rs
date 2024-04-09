@@ -1,4 +1,5 @@
 use futures::lock::Mutex;
+use log::info;
 use std::sync::Arc;
 use storage_common::RequestParams;
 use tokio_stream::wrappers::ReceiverStream;
@@ -28,7 +29,7 @@ pub async fn storage_node_serve() -> ParpulseResult<()> {
         .and_then(move |file_name: String| {
             let storage_manager = storage_manager.clone();
             async move {
-                println!("File Name: {}", file_name);
+                info!("File Name: {}", file_name);
                 let bucket = "tests-parquet".to_string();
                 let keys = vec![file_name];
                 let request = RequestParams::S3((bucket, keys));
@@ -59,7 +60,13 @@ mod tests {
     use reqwest::Client;
     use std::fs;
     use std::io::Write;
+    use storage_common::init_logger;
     use tempfile::tempdir;
+
+    #[test]
+    fn setup() {
+        init_logger();
+    }
 
     /// WARNING: Put userdata1.parquet in the storage-node/tests/parquet directory before running this test.
     #[tokio::test]

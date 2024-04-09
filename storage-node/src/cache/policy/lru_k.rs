@@ -1,5 +1,6 @@
 /// LRU-K cache implementation.
 /// Credit: https://doi.org/10.1145/170036.170081
+use log::{debug, warn};
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
@@ -77,7 +78,7 @@ impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruKReplacer<K, V> {
         if found {
             if let Some(key) = key_to_evict {
                 // TODO: Should have better logging
-                // println!("-------- Evicting Key: {:?} --------", key);
+                debug!("-------- Evicting Key: {:?} --------", key);
                 if let Some(node) = self.cache_map.remove(&key) {
                     self.size -= node.value.size();
                 }
@@ -108,8 +109,8 @@ impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruKReplacer<K, V> {
         if value.size() > self.max_capacity {
             // If the object size is greater than the max capacity, we do not insert the
             // object into the cache.
-            println!("Warning: The size of the value is greater than the max capacity",);
-            println!(
+            warn!("Warning: The size of the value is greater than the max capacity",);
+            warn!(
                 "Key: {:?}, Value: {:?}, Value size: {:?}, Max capacity: {:?}",
                 key,
                 value.as_value(),
@@ -214,6 +215,12 @@ mod tests {
     use super::{
         DataStoreReplacer, LruKReplacer, ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue,
     };
+    use storage_common::init_logger;
+
+    #[test]
+    fn setup() {
+        init_logger();
+    }
 
     #[test]
     fn test_new() {

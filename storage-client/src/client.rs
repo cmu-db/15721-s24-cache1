@@ -3,6 +3,7 @@ use arrow_array::RecordBatch;
 use futures::stream::StreamExt;
 use futures::TryStreamExt;
 use hyper::Uri;
+use log::info;
 use parquet::arrow::{ParquetRecordBatchStreamBuilder, ProjectionMask};
 use reqwest::Client;
 use std::fs::File;
@@ -70,7 +71,7 @@ impl StorageClient for StorageClientImpl {
         // Then we need to send the request to the storage server.
         let url = format!("{}file/{}", self._storage_server_endpoint, _location);
         let client = Client::new();
-        println!("Requesting data from: {}", url);
+        info!("Requesting data from: {}", url);
         let response = client.get(url).send().await?;
         if response.status().is_success() {
             // Store the streamed Parquet file in a temporary file.
@@ -123,13 +124,19 @@ mod tests {
     use super::*;
     use arrow::array::StringArray;
     use mockito::Server;
+    use storage_common::init_logger;
+
+    #[test]
+    fn setup() {
+        init_logger();
+    }
 
     /// WARNING: Put userdata1.parquet in the storage-node/tests/parquet directory before running this test.
     #[tokio::test]
     async fn test_storage_client_wo_ee_catalog() {
         // Create a mock server to serve the parquet file.
         let mut server = Server::new_async().await;
-        println!("server host: {}", server.host_with_port());
+        info!("server host: {}", server.host_with_port());
         server
             .mock("GET", "/file/userdata1.parquet")
             .with_body_from_file("../storage-node/tests/parquet/userdata1.parquet")
