@@ -96,7 +96,8 @@ mod tests {
         // Give the server some time to start
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-        let url = "http://localhost:3030/file?bucket=tests-parquet&keys=userdata1.parquet";
+        let url =
+            "http://localhost:3030/file?bucket=tests-parquet&keys=userdata1.parquet&is_test=true";
         let client = Client::new();
         let mut response = client
             .get(url)
