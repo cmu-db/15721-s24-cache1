@@ -4,7 +4,7 @@ use futures::stream::StreamExt;
 use futures::TryStreamExt;
 use hyper::Uri;
 use parquet::arrow::{ParquetRecordBatchStreamBuilder, ProjectionMask};
-use reqwest::{Client, Url};
+use reqwest::{Client, Response, Url};
 use std::fs::File;
 use std::io::Write;
 use storage_common::RequestParams;
@@ -17,9 +17,11 @@ use crate::{StorageClient, StorageRequest};
 /// The batch size for the record batch.
 const BATCH_SIZE: usize = 3;
 const CHANNEL_CAPACITY: usize = 10;
+const PARAM_BUCKET_KEY: &str = "bucket";
+const PARAM_KEYS_KEY: &str = "keys";
 
 pub struct StorageClientImpl {
-    _storage_server_endpoint: Uri,
+    storage_server_endpoint: Uri,
     _catalog_server_endpoint: Uri,
 }
 
@@ -41,7 +43,7 @@ impl StorageClientImpl {
             )
         })?;
         Ok(Self {
-            _storage_server_endpoint: storage_server_endpoint,
+            storage_server_endpoint: storage_server_endpoint,
             _catalog_server_endpoint: catalog_server_endpoint,
         })
     }
@@ -50,31 +52,12 @@ impl StorageClientImpl {
     async fn get_info_from_catalog(&self, _request: StorageRequest) -> Result<RequestParams> {
         // FIXME (kunle): Need to discuss with the catalog team.
         // The following line serves as a placeholder for now.
-        let bucket = "tests-parquet".to_string();
-        let keys = vec!["userdata1.parquet".to_string()];
+        let bucket = "parpulse-test".to_string();
+        let keys = vec!["userdata/userdata1.parquet".to_string()];
         Ok(RequestParams::S3((bucket, keys)))
     }
-}
 
-#[async_trait::async_trait]
-impl StorageClient for StorageClientImpl {
-    async fn request_data(&self, _request: StorageRequest) -> Result<Receiver<RecordBatch>> {
-        // First we need to get the location of the parquet file from the catalog server.
-        let location = match self.get_info_from_catalog(_request).await? {
-            RequestParams::S3(location) => location,
-            _ => {
-                return Err(anyhow!(
-                    "Failed to get location of the file from the catalog server."
-                ));
-            }
-        };
-
-        // Then we need to send the request to the storage server.
-        let client = Client::new();
-        let url = format!("{}file", self._storage_server_endpoint);
-        let params = [("bucket", location.0), ("keys", location.1.join(","))];
-        let url = Url::parse_with_params(&url, params)?;
-        let response = client.get(url).send().await?;
+    async fn get_data_from_response(response: Response) -> Result<Receiver<RecordBatch>> {
         if response.status().is_success() {
             // Store the streamed Parquet file in a temporary file.
             // FIXME: 1. Do we really need streaming here?
@@ -113,6 +96,65 @@ impl StorageClient for StorageClientImpl {
                 response.status()
             ))
         }
+    }
+
+    async fn get_info_from_catalog_test(&self, _request: StorageRequest) -> Result<RequestParams> {
+        let bucket = "tests-parquet".to_string();
+        let keys = vec!["userdata1.parquet".to_string()];
+        Ok(RequestParams::S3((bucket, keys)))
+    }
+
+    pub async fn request_data_test(
+        &self,
+        request: StorageRequest,
+    ) -> Result<Receiver<RecordBatch>> {
+        // First we need to get the location of the parquet file from the catalog server.
+        let location = match self.get_info_from_catalog_test(request).await? {
+            RequestParams::S3(location) => location,
+            _ => {
+                return Err(anyhow!(
+                    "Failed to get location of the file from the catalog server."
+                ));
+            }
+        };
+
+        // Then we need to send the request to the storage server.
+        let client = Client::new();
+        let url = format!("{}file", self.storage_server_endpoint);
+        let params = [
+            (PARAM_BUCKET_KEY, location.0),
+            (PARAM_KEYS_KEY, location.1.join(",")),
+            ("is_test", "true".to_owned()),
+        ];
+        let url = Url::parse_with_params(&url, params)?;
+        let response = client.get(url).send().await?;
+        Self::get_data_from_response(response).await
+    }
+}
+
+#[async_trait::async_trait]
+impl StorageClient for StorageClientImpl {
+    async fn request_data(&self, request: StorageRequest) -> Result<Receiver<RecordBatch>> {
+        // First we need to get the location of the parquet file from the catalog server.
+        let location = match self.get_info_from_catalog(request).await? {
+            RequestParams::S3(location) => location,
+            _ => {
+                return Err(anyhow!(
+                    "Failed to get location of the file from the catalog server."
+                ));
+            }
+        };
+
+        // Then we need to send the request to the storage server.
+        let client = Client::new();
+        let url = format!("{}file", self.storage_server_endpoint);
+        let params = [
+            (PARAM_BUCKET_KEY, location.0),
+            (PARAM_KEYS_KEY, location.1.join(",")),
+        ];
+        let url = Url::parse_with_params(&url, params)?;
+        let response = client.get(url).send().await?;
+        Self::get_data_from_response(response).await
     }
 
     // TODO (kunle): I don't think this function is necessary.

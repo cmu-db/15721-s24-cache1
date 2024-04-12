@@ -5,9 +5,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use warp::{Filter, Rejection};
 
 use crate::{
-    cache::{
-        data_store_cache::memdisk::cache_manager::MemDiskStoreCache, policy::lru::LruReplacer,
-    },
+    cache::{data_store_cache::memdisk::MemDiskStoreCache, policy::lru::LruReplacer},
     error::ParpulseResult,
     storage_manager::StorageManager,
 };
@@ -28,14 +26,25 @@ pub async fn storage_node_serve() -> ParpulseResult<()> {
         .and(warp::query::<S3Request>())
         .and_then(move |params: S3Request| {
             let storage_manager = storage_manager.clone();
-            println!(
-                "Received request for bucket: {}, keys: {:?}",
-                params.bucket, params.keys
-            );
+            if params.is_test {
+                println!(
+                    "Received test request for bucket: {}, keys: {:?}",
+                    params.bucket, params.keys
+                );
+            } else {
+                println!(
+                    "Received request for bucket: {}, keys: {:?}",
+                    params.bucket, params.keys
+                );
+            }
             async move {
                 let bucket = params.bucket;
                 let keys = params.keys;
-                let request = RequestParams::S3((bucket, vec![keys]));
+                let request = if params.is_test {
+                    RequestParams::MockS3((bucket, vec![keys]))
+                } else {
+                    RequestParams::S3((bucket, vec![keys]))
+                };
                 let result = storage_manager.lock().await.get_data(request).await;
                 let data_rx = result.unwrap();
 

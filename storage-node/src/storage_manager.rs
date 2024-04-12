@@ -1,7 +1,7 @@
 use crate::{
     cache::data_store_cache::DataStoreCache,
     error::ParpulseResult,
-    storage_reader::{s3_diskmock::MockS3Reader, AsyncStorageReader},
+    storage_reader::{s3::S3Reader, s3_diskmock::MockS3Reader, AsyncStorageReader},
 };
 
 use bytes::Bytes;
@@ -33,9 +33,10 @@ impl<C: DataStoreCache> StorageManager<C> {
         // the underlying storage.
         // 3. If needed, update the cache with the data fetched from the storage reader.
         // TODO: Support more request types.
+        let is_s3_request = matches!(request, RequestParams::S3(_));
         let (bucket, keys) = match request {
             RequestParams::S3((bucket, keys)) => (bucket, keys),
-            _ => unreachable!(),
+            RequestParams::MockS3((bucket, keys)) => (bucket, keys),
         };
 
         // FIXME: Cache key should be <bucket + key>. Might refactor the underlying S3
@@ -48,8 +49,13 @@ impl<C: DataStoreCache> StorageManager<C> {
         if let Some(data_rx) = data_rx {
             Ok(data_rx)
         } else {
-            let reader = MockS3Reader::new(bucket.clone(), keys).await;
-            let stream = reader.into_stream().await?;
+            let stream = if is_s3_request {
+                let reader = S3Reader::new(bucket.clone(), keys).await;
+                reader.into_stream().await?
+            } else {
+                let reader = MockS3Reader::new(bucket.clone(), keys).await;
+                reader.into_stream().await?
+            };
             self.data_store_cache
                 .put_data_to_cache(cache_key.clone(), stream)
                 .await?;
@@ -75,9 +81,7 @@ pub trait ParpulseReaderIterator: Iterator<Item = ParpulseResult<usize>> {
 mod tests {
     use std::time::Instant;
 
-    use crate::cache::{
-        data_store_cache::memdisk::cache_manager::MemDiskStoreCache, policy::lru::LruReplacer,
-    };
+    use crate::cache::{data_store_cache::memdisk::MemDiskStoreCache, policy::lru::LruReplacer};
 
     use super::*;
 
