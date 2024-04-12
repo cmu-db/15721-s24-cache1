@@ -43,7 +43,7 @@ impl StorageClientImpl {
             )
         })?;
         Ok(Self {
-            storage_server_endpoint: storage_server_endpoint,
+            storage_server_endpoint,
             _catalog_server_endpoint: catalog_server_endpoint,
         })
     }
