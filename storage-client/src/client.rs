@@ -176,7 +176,10 @@ mod tests {
         let mut server = Server::new_async().await;
         println!("server host: {}", server.host_with_port());
         server
-            .mock("GET", "/file?bucket=tests-parquet&keys=userdata1.parquet")
+            .mock(
+                "GET",
+                "/file?bucket=tests-parquet&keys=userdata1.parquet&is_test=true",
+            )
             .with_body_from_file("../storage-node/tests/parquet/userdata1.parquet")
             .create_async()
             .await;
@@ -187,7 +190,7 @@ mod tests {
             .expect("Failed to create storage client.");
         let request = StorageRequest::Table(1);
         let mut receiver = storage_client
-            .request_data(request)
+            .request_data_test(request)
             .await
             .expect("Failed to get data from the server.");
         let mut record_batches = vec![];
