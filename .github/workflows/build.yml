@@ -22,7 +22,7 @@ jobs:
     - name: Install Toolchain
       run: |
         echo 11111
-        echo ${{ vars.MY_SECRET_KEY }}
+        echo ${{ secrets.MY_SECRET_KEY }}
         echo 22222
         rustup update stable
         rustup default stable
