@@ -113,7 +113,7 @@ mod tests {
 
         let bucket = "tests-parquet".to_string();
         let keys = vec!["userdata1.parquet".to_string()];
-        let request = RequestParams::S3((bucket, keys));
+        let request = RequestParams::MockS3((bucket, keys));
 
         let mut start_time = Instant::now();
         let result = storage_manager.get_data(request.clone()).await;
@@ -169,7 +169,8 @@ mod tests {
 
         let request_path_small_bucket = "tests-text".to_string();
         let request_path_small_keys = vec!["what-can-i-hold-you-with".to_string()];
-        let request_small = RequestParams::S3((request_path_small_bucket, request_path_small_keys));
+        let request_small =
+            RequestParams::MockS3((request_path_small_bucket, request_path_small_keys));
 
         let result = storage_manager.get_data(request_small.clone()).await;
         assert!(result.is_ok());
@@ -177,7 +178,8 @@ mod tests {
 
         let request_path_large_bucket = "tests-parquet".to_string();
         let request_path_large_keys = vec!["userdata2.parquet".to_string()];
-        let request_large = RequestParams::S3((request_path_large_bucket, request_path_large_keys));
+        let request_large =
+            RequestParams::MockS3((request_path_large_bucket, request_path_large_keys));
 
         let result = storage_manager.get_data(request_large.clone()).await;
         assert!(result.is_ok());
@@ -226,7 +228,7 @@ mod tests {
 
         let request_path_bucket1 = "tests-parquet".to_string();
         let request_path_keys1 = vec!["userdata1.parquet".to_string()];
-        let request_data1 = RequestParams::S3((request_path_bucket1, request_path_keys1));
+        let request_data1 = RequestParams::MockS3((request_path_bucket1, request_path_keys1));
 
         let result = storage_manager.get_data(request_data1.clone()).await;
         assert!(result.is_ok());
@@ -234,7 +236,7 @@ mod tests {
 
         let request_path_bucket2 = "tests-parquet".to_string();
         let request_path_keys2 = vec!["userdata2.parquet".to_string()];
-        let request_data2 = RequestParams::S3((request_path_bucket2, request_path_keys2));
+        let request_data2 = RequestParams::MockS3((request_path_bucket2, request_path_keys2));
 
         let result = storage_manager.get_data(request_data2.clone()).await;
         assert!(result.is_ok());
