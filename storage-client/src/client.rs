@@ -4,7 +4,7 @@ use futures::stream::StreamExt;
 use futures::TryStreamExt;
 use hyper::Uri;
 use parquet::arrow::{ParquetRecordBatchStreamBuilder, ProjectionMask};
-use reqwest::Client;
+use reqwest::{Client, Url};
 use std::fs::File;
 use std::io::Write;
 use storage_common::RequestParams;
@@ -50,7 +50,9 @@ impl StorageClientImpl {
     async fn get_info_from_catalog(&self, _request: StorageRequest) -> Result<RequestParams> {
         // FIXME (kunle): Need to discuss with the catalog team.
         // The following line serves as a placeholder for now.
-        Ok(RequestParams::File("userdata1.parquet".to_string()))
+        let bucket = "tests-parquet".to_string();
+        let keys = vec!["userdata1.parquet".to_string()];
+        Ok(RequestParams::S3((bucket, keys)))
     }
 }
 
@@ -58,8 +60,8 @@ impl StorageClientImpl {
 impl StorageClient for StorageClientImpl {
     async fn request_data(&self, _request: StorageRequest) -> Result<Receiver<RecordBatch>> {
         // First we need to get the location of the parquet file from the catalog server.
-        let _location = match self.get_info_from_catalog(_request).await? {
-            RequestParams::File(location) => location,
+        let location = match self.get_info_from_catalog(_request).await? {
+            RequestParams::S3(location) => location,
             _ => {
                 return Err(anyhow!(
                     "Failed to get location of the file from the catalog server."
@@ -68,9 +70,10 @@ impl StorageClient for StorageClientImpl {
         };
 
         // Then we need to send the request to the storage server.
-        let url = format!("{}file/{}", self._storage_server_endpoint, _location);
         let client = Client::new();
-        println!("Requesting data from: {}", url);
+        let url = format!("{}file", self._storage_server_endpoint);
+        let params = [("bucket", location.0), ("keys", location.1.join(","))];
+        let url = Url::parse_with_params(&url, params)?;
         let response = client.get(url).send().await?;
         if response.status().is_success() {
             // Store the streamed Parquet file in a temporary file.
@@ -131,7 +134,7 @@ mod tests {
         let mut server = Server::new_async().await;
         println!("server host: {}", server.host_with_port());
         server
-            .mock("GET", "/file/userdata1.parquet")
+            .mock("GET", "/file?bucket=tests-parquet&keys=userdata1.parquet")
             .with_body_from_file("../storage-node/tests/parquet/userdata1.parquet")
             .create_async()
             .await;
