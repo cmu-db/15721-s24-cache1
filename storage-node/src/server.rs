@@ -5,9 +5,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use warp::{Filter, Rejection};
 
 use crate::{
-    cache::{
-        data_store_cache::memdisk::cache_manager::MemDiskStoreCache, policy::lru::LruReplacer,
-    },
+    cache::{data_store_cache::memdisk::MemDiskStoreCache, policy::lru::LruReplacer},
     error::ParpulseResult,
     storage_manager::StorageManager,
 };

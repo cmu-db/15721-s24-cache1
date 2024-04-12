@@ -75,9 +75,7 @@ pub trait ParpulseReaderIterator: Iterator<Item = ParpulseResult<usize>> {
 mod tests {
     use std::time::Instant;
 
-    use crate::cache::{
-        data_store_cache::memdisk::cache_manager::MemDiskStoreCache, policy::lru::LruReplacer,
-    };
+    use crate::cache::{data_store_cache::memdisk::MemDiskStoreCache, policy::lru::LruReplacer};
 
     use super::*;
 
