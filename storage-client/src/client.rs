@@ -101,7 +101,7 @@ impl StorageClientImpl {
     async fn get_info_from_catalog_test(&self, _request: StorageRequest) -> Result<RequestParams> {
         let bucket = "tests-parquet".to_string();
         let keys = vec!["userdata1.parquet".to_string()];
-        Ok(RequestParams::S3((bucket, keys)))
+        Ok(RequestParams::MockS3((bucket, keys)))
     }
 
     pub async fn request_data_test(
@@ -110,7 +110,7 @@ impl StorageClientImpl {
     ) -> Result<Receiver<RecordBatch>> {
         // First we need to get the location of the parquet file from the catalog server.
         let location = match self.get_info_from_catalog_test(request).await? {
-            RequestParams::S3(location) => location,
+            RequestParams::MockS3(location) => location,
             _ => {
                 return Err(anyhow!(
                     "Failed to get location of the file from the catalog server."
