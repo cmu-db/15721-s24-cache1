@@ -1,4 +1,5 @@
 use enum_as_inner::EnumAsInner;
+use serde::Deserialize;
 
 #[derive(Clone, EnumAsInner, Debug)]
 pub enum RequestParams {
@@ -13,4 +14,11 @@ pub fn init_logger() {
         .filter_level(log::LevelFilter::Info)
         .is_test(true)
         .try_init();
+}
+
+#[derive(Deserialize)]
+pub struct S3Request {
+    pub bucket: String,
+    /// Cannot deserialize a vector of strings, might need to customize a deserializer later.
+    pub keys: String,
 }
