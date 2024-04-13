@@ -73,20 +73,13 @@ pub trait ParpulseReaderIterator: Iterator<Item = ParpulseResult<usize>> {
 
 #[cfg(test)]
 mod tests {
-    use log::info;
     use std::time::Instant;
-    use storage_common::init_logger;
 
     use crate::cache::{
         data_store_cache::memdisk::cache_manager::MemDiskStoreCache, policy::lru::LruReplacer,
     };
 
     use super::*;
-
-    #[test]
-    fn setup() {
-        init_logger();
-    }
 
     async fn consume_receiver(mut rx: Receiver<ParpulseResult<Bytes>>) -> usize {
         let mut total_bytes = 0;
@@ -141,7 +134,7 @@ mod tests {
         assert_eq!(consume_receiver(data_rx).await, 113629);
         let delta_time_hit = Instant::now() - start_time;
 
-        info!(
+        println!(
             "Delta time miss: {:?}, delta time hit: {:?}",
             delta_time_miss, delta_time_hit
         );
@@ -199,7 +192,7 @@ mod tests {
         assert_eq!(consume_receiver(result.unwrap()).await, 930);
         let delta_time_hit_mem = Instant::now() - start_time;
 
-        info!(
+        println!(
             "For small and large files, Delta time hit mem: {:?}, delta time hit disk: {:?}",
             delta_time_hit_mem, delta_time_hit_disk
         );
@@ -256,7 +249,7 @@ mod tests {
         assert_eq!(consume_receiver(result.unwrap()).await, 112193);
         let delta_time_hit_mem = Instant::now() - start_time;
 
-        info!(
+        println!(
             "For almost same files, delta time hit mem: {:?}, delta time hit disk: {:?}",
             delta_time_hit_mem, delta_time_hit_disk
         );

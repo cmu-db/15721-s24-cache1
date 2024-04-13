@@ -215,12 +215,6 @@ mod tests {
     use super::{
         DataStoreReplacer, LruKReplacer, ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue,
     };
-    use storage_common::init_logger;
-
-    #[test]
-    fn setup() {
-        init_logger();
-    }
 
     #[test]
     fn test_new() {

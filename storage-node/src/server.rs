@@ -1,5 +1,5 @@
 use futures::lock::Mutex;
-use log::info;
+use log::{info, warn};
 use std::sync::Arc;
 use storage_common::{RequestParams, S3Request};
 use tokio_stream::wrappers::ReceiverStream;
@@ -29,7 +29,7 @@ pub async fn storage_node_serve() -> ParpulseResult<()> {
         .and(warp::query::<S3Request>())
         .and_then(move |params: S3Request| {
             let storage_manager = storage_manager.clone();
-            println!(
+            info!(
                 "Received request for bucket: {}, keys: {:?}",
                 params.bucket, params.keys
             );
@@ -57,7 +57,7 @@ pub async fn storage_node_serve() -> ParpulseResult<()> {
     let catch_all = warp::any()
         .and(warp::path::full())
         .map(|path: warp::path::FullPath| {
-            println!("Catch all route hit. Path: {}", path.as_str());
+            warn!("Catch all route hit. Path: {}", path.as_str());
             warp::http::StatusCode::NOT_FOUND
         });
 
@@ -73,13 +73,7 @@ mod tests {
     use reqwest::Client;
     use std::fs;
     use std::io::Write;
-    use storage_common::init_logger;
     use tempfile::tempdir;
-
-    #[test]
-    fn setup() {
-        init_logger();
-    }
 
     /// WARNING: Put userdata1.parquet in the storage-node/tests/parquet directory before running this test.
     #[tokio::test]

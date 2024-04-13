@@ -8,17 +8,17 @@ pub enum RequestParams {
     S3((String, Vec<String>)),
 }
 
-/// Initialize the logger for tests
-pub fn init_logger() {
-    let _ = env_logger::builder()
-        .filter_level(log::LevelFilter::Info)
-        .is_test(true)
-        .try_init();
-}
-
 #[derive(Deserialize)]
 pub struct S3Request {
     pub bucket: String,
     /// Cannot deserialize a vector of strings, might need to customize a deserializer later.
     pub keys: String,
+}
+
+/// Initialize the logger
+pub fn init_logger() {
+    let _ = env_logger::builder()
+        .filter_level(log::LevelFilter::Info)
+        .is_test(true)
+        .try_init();
 }
