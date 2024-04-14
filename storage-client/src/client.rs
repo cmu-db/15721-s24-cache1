@@ -104,6 +104,18 @@ impl StorageClientImpl {
         Ok(RequestParams::MockS3((bucket, keys)))
     }
 
+    fn get_request_url_and_params(
+        &self,
+        location: (String, Vec<String>),
+    ) -> (String, Vec<(&str, String)>) {
+        let url = format!("{}file", self.storage_server_endpoint);
+        let params = vec![
+            (PARAM_BUCKET_KEY, location.0),
+            (PARAM_KEYS_KEY, location.1.join(",")),
+        ];
+        (url, params)
+    }
+
     pub async fn request_data_test(
         &self,
         request: StorageRequest,
@@ -120,12 +132,9 @@ impl StorageClientImpl {
 
         // Then we need to send the request to the storage server.
         let client = Client::new();
-        let url = format!("{}file", self.storage_server_endpoint);
-        let params = [
-            (PARAM_BUCKET_KEY, location.0),
-            (PARAM_KEYS_KEY, location.1.join(",")),
-            ("is_test", "true".to_owned()),
-        ];
+        let (url, mut params) = self.get_request_url_and_params(location);
+        params.push(("is_test", "true".to_owned()));
+
         let url = Url::parse_with_params(&url, params)?;
         let response = client.get(url).send().await?;
         Self::get_data_from_response(response).await
@@ -147,11 +156,7 @@ impl StorageClient for StorageClientImpl {
 
         // Then we need to send the request to the storage server.
         let client = Client::new();
-        let url = format!("{}file", self.storage_server_endpoint);
-        let params = [
-            (PARAM_BUCKET_KEY, location.0),
-            (PARAM_KEYS_KEY, location.1.join(",")),
-        ];
+        let (url, params) = self.get_request_url_and_params(location);
         let url = Url::parse_with_params(&url, params)?;
         let response = client.get(url).send().await?;
         Self::get_data_from_response(response).await
