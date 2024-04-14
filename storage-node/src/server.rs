@@ -1,4 +1,5 @@
 use futures::lock::Mutex;
+use log::{info, warn};
 use std::sync::Arc;
 use storage_common::{RequestParams, S3Request};
 use tokio_stream::wrappers::ReceiverStream;
@@ -27,12 +28,12 @@ pub async fn storage_node_serve() -> ParpulseResult<()> {
         .and_then(move |params: S3Request| {
             let storage_manager = storage_manager.clone();
             if params.is_test {
-                println!(
+                info!(
                     "Received test request for bucket: {}, keys: {:?}",
                     params.bucket, params.keys
                 );
             } else {
-                println!(
+                info!(
                     "Received request for bucket: {}, keys: {:?}",
                     params.bucket, params.keys
                 );
@@ -65,7 +66,7 @@ pub async fn storage_node_serve() -> ParpulseResult<()> {
     let catch_all = warp::any()
         .and(warp::path::full())
         .map(|path: warp::path::FullPath| {
-            println!("Catch all route hit. Path: {}", path.as_str());
+            warn!("Catch all route hit. Path: {}", path.as_str());
             warp::http::StatusCode::NOT_FOUND
         });
 

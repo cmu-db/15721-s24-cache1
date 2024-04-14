@@ -18,3 +18,11 @@ pub struct S3Request {
     #[serde(default)]
     pub is_test: bool,
 }
+
+/// Initialize the logger
+pub fn init_logger() {
+    let _ = env_logger::builder()
+        .filter_level(log::LevelFilter::Info)
+        .is_test(true)
+        .try_init();
+}

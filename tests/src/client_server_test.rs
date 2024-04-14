@@ -10,7 +10,13 @@ mod tests {
     use serial_test::serial;
     use storage_client::client::StorageClientImpl;
     use storage_client::{StorageClient, StorageRequest};
+    use storage_common::init_logger;
     use storage_node::server::storage_node_serve;
+
+    #[test]
+    fn setup() {
+        init_logger();
+    }
 
     #[tokio::test]
     #[serial]
