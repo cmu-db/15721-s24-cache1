@@ -9,7 +9,13 @@ mod tests {
     use arrow::array::StringArray;
     use storage_client::client::StorageClientImpl;
     use storage_client::{StorageClient, StorageRequest};
+    use storage_common::init_logger;
     use storage_node::server::storage_node_serve;
+
+    #[test]
+    fn setup() {
+        init_logger();
+    }
 
     #[tokio::test]
     // #[ignore = "Need to discuss how to set S3 params"]

@@ -9,3 +9,4 @@ storage-client = { path = "../storage-client" }
 storage-common = { path = "../storage-common" }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 arrow = "51.0.0"
+log = "0.4"
