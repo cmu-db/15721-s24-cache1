@@ -1,20 +1,20 @@
 use hashlink::linked_hash_map;
 use hashlink::LinkedHashMap;
 
-use super::DataStoreCacheKey;
-use super::DataStoreCacheValue;
-use super::{DataStoreReplacer, ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue};
+use super::ReplacerKey;
+use super::ReplacerValue;
+use super::{DataStoreReplacer, ParpulseReplacerKey, ParpulseReplacerValue};
 
 /// [`LruReplacer`] adopts the least-recently-used algorithm to cache sized
 /// objects. The cache will start evicting if a new object comes that makes
 /// the cache's size exceeds its max capacity, from the oldest to the newest.
-pub struct LruReplacer<K: DataStoreCacheKey, V: DataStoreCacheValue> {
+pub struct LruReplacer<K: ReplacerKey, V: ReplacerValue> {
     cache_map: LinkedHashMap<K, V>,
     max_capacity: usize,
     size: usize,
 }
 
-impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruReplacer<K, V> {
+impl<K: ReplacerKey, V: ReplacerValue> LruReplacer<K, V> {
     pub fn new(max_capacity: usize) -> LruReplacer<K, V> {
         LruReplacer {
             cache_map: LinkedHashMap::new(),
@@ -70,20 +70,20 @@ impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruReplacer<K, V> {
     }
 }
 
-impl DataStoreReplacer for LruReplacer<ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue> {
-    fn get(&mut self, key: &ParpulseDataStoreCacheKey) -> Option<&ParpulseDataStoreCacheValue> {
+impl DataStoreReplacer for LruReplacer<ParpulseReplacerKey, ParpulseReplacerValue> {
+    fn get(&mut self, key: &ParpulseReplacerKey) -> Option<&ParpulseReplacerValue> {
         self.get_value(key)
     }
 
     fn put(
         &mut self,
-        key: ParpulseDataStoreCacheKey,
-        value: ParpulseDataStoreCacheValue,
-    ) -> Option<Vec<ParpulseDataStoreCacheKey>> {
+        key: ParpulseReplacerKey,
+        value: ParpulseReplacerValue,
+    ) -> Option<Vec<ParpulseReplacerKey>> {
         self.put_value(key, value)
     }
 
-    fn peek(&self, key: &ParpulseDataStoreCacheKey) -> Option<&ParpulseDataStoreCacheValue> {
+    fn peek(&self, key: &ParpulseReplacerKey) -> Option<&ParpulseReplacerValue> {
         self.peek_value(key)
     }
 
@@ -115,21 +115,18 @@ impl DataStoreReplacer for LruReplacer<ParpulseDataStoreCacheKey, ParpulseDataSt
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        DataStoreReplacer, LruReplacer, ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue,
-    };
+    use super::{DataStoreReplacer, LruReplacer, ParpulseReplacerKey, ParpulseReplacerValue};
 
     #[test]
     fn test_new() {
-        let cache = LruReplacer::<ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue>::new(10);
+        let cache = LruReplacer::<ParpulseReplacerKey, ParpulseReplacerValue>::new(10);
         assert_eq!(cache.max_capacity(), 10);
         assert_eq!(cache.size(), 0);
     }
 
     #[test]
     fn test_peek_and_set() {
-        let mut cache =
-            LruReplacer::<ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue>::new(10);
+        let mut cache = LruReplacer::<ParpulseReplacerKey, ParpulseReplacerValue>::new(10);
         cache.put("key1".to_string(), ("value1".to_string(), 1));
         cache.put("key2".to_string(), ("value2".to_string(), 2));
         cache.put("key3".to_string(), ("value3".to_string(), 3));
@@ -157,8 +154,7 @@ mod tests {
 
     #[test]
     fn test_put_different_keys() {
-        let mut cache =
-            LruReplacer::<ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue>::new(10);
+        let mut cache = LruReplacer::<ParpulseReplacerKey, ParpulseReplacerValue>::new(10);
         cache.put("key1".to_string(), ("value1".to_string(), 1));
         assert_eq!(cache.size(), 1);
         cache.put("key2".to_string(), ("value2".to_string(), 2));
@@ -179,8 +175,7 @@ mod tests {
 
     #[test]
     fn test_put_same_key() {
-        let mut cache =
-            LruReplacer::<ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue>::new(10);
+        let mut cache = LruReplacer::<ParpulseReplacerKey, ParpulseReplacerValue>::new(10);
         cache.put("key1".to_string(), ("value1".to_string(), 1));
         cache.put("key1".to_string(), ("value2".to_string(), 2));
         cache.put("key1".to_string(), ("value3".to_string(), 3));

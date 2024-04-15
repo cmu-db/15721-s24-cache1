@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
-use super::DataStoreCacheKey;
-use super::DataStoreCacheValue;
-use super::{DataStoreReplacer, ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue};
+use super::ReplacerKey;
+use super::ReplacerValue;
+use super::{DataStoreReplacer, ParpulseReplacerKey, ParpulseReplacerValue};
 
 type Timestamp = i32;
 
@@ -14,7 +14,7 @@ type Timestamp = i32;
 /// Each node contains a value of type `V` and a history of timestamps.
 /// The history is stored as a `VecDeque<Timestamp>`, where the most recent
 /// timestamps are at the front of the deque.
-struct LruKNode<V: DataStoreCacheValue> {
+struct LruKNode<V: ReplacerValue> {
     value: V,
     history: VecDeque<Timestamp>,
 }
@@ -28,7 +28,7 @@ struct LruKNode<V: DataStoreCacheValue> {
 /// have +inf backward k-distance, the cache evicts the node with the earliest
 /// overall timestamp (i.e., the frame whose least-recent recorded access is the
 /// overall least recent access, overall, out of all nodes).
-pub struct LruKReplacer<K: DataStoreCacheKey, V: DataStoreCacheValue> {
+pub struct LruKReplacer<K: ReplacerKey, V: ReplacerValue> {
     cache_map: HashMap<K, LruKNode<V>>,
     max_capacity: usize,
     size: usize,
@@ -36,7 +36,7 @@ pub struct LruKReplacer<K: DataStoreCacheKey, V: DataStoreCacheValue> {
     k: usize, // The k value for LRU-K
 }
 
-impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruKReplacer<K, V> {
+impl<K: ReplacerKey, V: ReplacerValue> LruKReplacer<K, V> {
     pub fn new(max_capacity: usize, k: usize) -> LruKReplacer<K, V> {
         LruKReplacer {
             cache_map: HashMap::new(),
@@ -166,20 +166,20 @@ impl<K: DataStoreCacheKey, V: DataStoreCacheValue> LruKReplacer<K, V> {
     }
 }
 
-impl DataStoreReplacer for LruKReplacer<ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue> {
-    fn get(&mut self, key: &ParpulseDataStoreCacheKey) -> Option<&ParpulseDataStoreCacheValue> {
+impl DataStoreReplacer for LruKReplacer<ParpulseReplacerKey, ParpulseReplacerValue> {
+    fn get(&mut self, key: &ParpulseReplacerKey) -> Option<&ParpulseReplacerValue> {
         self.get_value(key)
     }
 
     fn put(
         &mut self,
-        key: ParpulseDataStoreCacheKey,
-        value: ParpulseDataStoreCacheValue,
-    ) -> Option<Vec<ParpulseDataStoreCacheKey>> {
+        key: ParpulseReplacerKey,
+        value: ParpulseReplacerValue,
+    ) -> Option<Vec<ParpulseReplacerKey>> {
         self.put_value(key, value)
     }
 
-    fn peek(&self, key: &ParpulseDataStoreCacheKey) -> Option<&ParpulseDataStoreCacheValue> {
+    fn peek(&self, key: &ParpulseReplacerKey) -> Option<&ParpulseReplacerValue> {
         self.peek_value(key)
     }
 
@@ -211,14 +211,11 @@ impl DataStoreReplacer for LruKReplacer<ParpulseDataStoreCacheKey, ParpulseDataS
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        DataStoreReplacer, LruKReplacer, ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue,
-    };
+    use super::{DataStoreReplacer, LruKReplacer, ParpulseReplacerKey, ParpulseReplacerValue};
 
     #[test]
     fn test_new() {
-        let mut cache =
-            LruKReplacer::<ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue>::new(10, 2);
+        let mut cache = LruKReplacer::<ParpulseReplacerKey, ParpulseReplacerValue>::new(10, 2);
         assert_eq!(cache.max_capacity(), 10);
         assert_eq!(cache.size(), 0);
         cache.set_max_capacity(20);
@@ -227,8 +224,7 @@ mod tests {
 
     #[test]
     fn test_peek_and_set() {
-        let mut cache =
-            LruKReplacer::<ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue>::new(10, 2);
+        let mut cache = LruKReplacer::<ParpulseReplacerKey, ParpulseReplacerValue>::new(10, 2);
         let key = "key1".to_string();
         let value = "value1".to_string();
         assert_eq!(cache.peek(&key), None);
@@ -243,8 +239,7 @@ mod tests {
 
     #[test]
     fn test_evict() {
-        let mut cache =
-            LruKReplacer::<ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue>::new(13, 2);
+        let mut cache = LruKReplacer::<ParpulseReplacerKey, ParpulseReplacerValue>::new(13, 2);
         let key1 = "key1".to_string();
         let key2 = "key2".to_string();
         let key3 = "key3".to_string();
@@ -281,8 +276,7 @@ mod tests {
 
     #[test]
     fn test_infinite() {
-        let mut cache =
-            LruKReplacer::<ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue>::new(6, 2);
+        let mut cache = LruKReplacer::<ParpulseReplacerKey, ParpulseReplacerValue>::new(6, 2);
         let key1 = "key1".to_string();
         let key2 = "key2".to_string();
         let key3 = "key3".to_string();
@@ -304,8 +298,7 @@ mod tests {
 
     #[test]
     fn test_put_same_key() {
-        let mut cache =
-            LruKReplacer::<ParpulseDataStoreCacheKey, ParpulseDataStoreCacheValue>::new(10, 2);
+        let mut cache = LruKReplacer::<ParpulseReplacerKey, ParpulseReplacerValue>::new(10, 2);
         cache.put("key1".to_string(), ("value1".to_string(), 1));
         cache.put("key1".to_string(), ("value2".to_string(), 2));
         cache.put("key1".to_string(), ("value3".to_string(), 3));

@@ -3,15 +3,15 @@ pub mod lru_k;
 use std::fmt::Debug;
 use std::hash::Hash;
 
-/// [`DataStoreCacheKey`] is the key type for data store caches using different
+/// [`ReplacerKey`] is the key type for data store caches using different
 /// cache policies in the system.
-pub trait DataStoreCacheKey: Hash + Eq + Clone + Debug {}
-impl<T: Hash + Eq + Clone + Debug> DataStoreCacheKey for T {}
-/// [`DataStoreCacheValue`] is the value type for data store caches using different
+pub trait ReplacerKey: Hash + Eq + Clone + Debug {}
+impl<T: Hash + Eq + Clone + Debug> ReplacerKey for T {}
+/// [`ReplacerValue`] is the value type for data store caches using different
 /// cache policies in the system.
 /// It might represent a logical object and we can get the actual size for this
 /// logical object by calling `size()`.
-pub trait DataStoreCacheValue {
+pub trait ReplacerValue {
     type Value: Debug;
 
     fn into_value(self) -> Self::Value;
@@ -19,14 +19,14 @@ pub trait DataStoreCacheValue {
     fn size(&self) -> usize;
 }
 
-/// [`ParpulseDataStoreCacheKey`] is a path to the remote object store.
-pub type ParpulseDataStoreCacheKey = String;
-/// [`ParpulseDataStoreCacheValue`] contains a path to the local disk indicating
+/// [`ParpulseReplacerKey`] is a path to the remote object store.
+pub type ParpulseReplacerKey = String;
+/// [`ParpulseReplacerValue`] contains a path to the local disk indicating
 /// where the cached item is stored, and also the size of the cached item.
 /// This is just a prototype and we might refine it later.
-pub type ParpulseDataStoreCacheValue = (String, usize);
+pub type ParpulseReplacerValue = (String, usize);
 
-impl DataStoreCacheValue for ParpulseDataStoreCacheValue {
+impl ReplacerValue for ParpulseReplacerValue {
     type Value = String;
 
     fn into_value(self) -> Self::Value {
@@ -53,20 +53,20 @@ impl DataStoreCacheValue for ParpulseDataStoreCacheValue {
 pub trait DataStoreReplacer: Send + Sync {
     /// Gets a value from the cache. Might has side effect on the cache (e.g.
     /// modifying some bookkeeping fields in the cache).
-    fn get(&mut self, key: &ParpulseDataStoreCacheKey) -> Option<&ParpulseDataStoreCacheValue>;
+    fn get(&mut self, key: &ParpulseReplacerKey) -> Option<&ParpulseReplacerValue>;
 
     /// Puts a value into the cache.
     /// Returns `None`: insertion failed.
     /// Returns `Some`: insertion successful with a list of keys that are evicted from the cache.
     fn put(
         &mut self,
-        key: ParpulseDataStoreCacheKey,
-        value: ParpulseDataStoreCacheValue,
-    ) -> Option<Vec<ParpulseDataStoreCacheKey>>;
+        key: ParpulseReplacerKey,
+        value: ParpulseReplacerValue,
+    ) -> Option<Vec<ParpulseReplacerKey>>;
 
     /// Returns a reference to the value in the cache with no side effect on the
     /// cache.
-    fn peek(&self, key: &ParpulseDataStoreCacheKey) -> Option<&ParpulseDataStoreCacheValue>;
+    fn peek(&self, key: &ParpulseReplacerKey) -> Option<&ParpulseReplacerValue>;
 
     /// Returns the number of the objects in the cache.
     fn len(&self) -> usize;

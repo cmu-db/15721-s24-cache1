@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 use crate::{
     cache::{
         data_store_cache::DataStoreCache,
-        policy::{DataStoreReplacer, ParpulseDataStoreCacheKey},
+        policy::{DataStoreReplacer, ParpulseReplacerKey},
     },
     disk::disk_manager::DiskManager,
     error::{ParpulseError, ParpulseResult},
@@ -120,9 +120,8 @@ impl<R: DataStoreReplacer> DataStoreCache for MemDiskStoreCache<R> {
         // TODO(lanlou): Also write the data to network.
         let mut bytes_to_disk = None;
         let mut bytes_mem_written = 0;
-        let mut evicted_bytes_to_disk: Option<
-            Vec<(ParpulseDataStoreCacheKey, (Vec<Bytes>, usize))>,
-        > = None;
+        let mut evicted_bytes_to_disk: Option<Vec<(ParpulseReplacerKey, (Vec<Bytes>, usize))>> =
+            None;
         // 1. If the mem_store is enabled, first try to write the data to memory.
         // Note: Only file which size < mem_max_file_size can be written to memory.
         if let Some(mem_store) = &mut self.mem_store {
