@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 use crate::{
     cache::{
         data_store_cache::DataStoreCache,
-        policy::{DataStoreReplacer, ParpulseDataStoreCacheKey},
+        replacer::{DataStoreReplacer, ReplacerValue},
     },
     disk::disk_manager::DiskManager,
     error::{ParpulseError, ParpulseResult},
@@ -24,7 +24,42 @@ use self::data_store::{disk::DiskStore, memory::MemStore};
 /// TODO(lanlou): make this value configurable.
 pub const DEFAULT_MEM_CACHE_MAX_FILE_SIZE: usize = 1024 * 512;
 
-pub struct MemDiskStoreCache<R: DataStoreReplacer> {
+/// [`MemDiskStoreReplacerKey`] is a path to the remote object store.
+pub type MemDiskStoreReplacerKey = String;
+
+pub struct MemDiskStoreReplacerValue {
+    /// The path to the data store. For mem store, it should be data's s3 path. For disk
+    /// store, it should be cached data's disk path.
+    pub(crate) path: String,
+    /// The size of the cached item.
+    pub(crate) size: usize,
+}
+
+impl MemDiskStoreReplacerValue {
+    pub fn new(path: String, size: usize) -> Self {
+        MemDiskStoreReplacerValue { path, size }
+    }
+}
+
+impl ReplacerValue for MemDiskStoreReplacerValue {
+    type Value = String;
+
+    fn into_value(self) -> Self::Value {
+        self.path
+    }
+
+    fn as_value(&self) -> &Self::Value {
+        &self.path
+    }
+
+    fn size(&self) -> usize {
+        self.size
+    }
+}
+
+pub struct MemDiskStoreCache<
+    R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>,
+> {
     disk_store: DiskStore,
     mem_store: Option<MemStore>,
     /// Cache_key = S3_PATH; Cache_value = (CACHE_BASE_PATH + S3_PATH, size)
@@ -37,7 +72,9 @@ pub struct MemDiskStoreCache<R: DataStoreReplacer> {
 /// If one file is larger than `mem_max_file_size`, we will not write it into memory. And all the files
 /// in the memory cannot exceed the `maximum_capacity` of the memory replacer.
 /// Ideally, mem_max_file_size should always be less than or equal to the maximum capacity of the memory.
-impl<R: DataStoreReplacer> MemDiskStoreCache<R> {
+impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>>
+    MemDiskStoreCache<R>
+{
     pub fn new(
         disk_replacer: R,
         disk_base_path: String,
@@ -77,7 +114,9 @@ impl<R: DataStoreReplacer> MemDiskStoreCache<R> {
 }
 
 #[async_trait]
-impl<R: DataStoreReplacer> DataStoreCache for MemDiskStoreCache<R> {
+impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> DataStoreCache
+    for MemDiskStoreCache<R>
+{
     async fn get_data_from_cache(
         &mut self,
         remote_location: String,
@@ -85,7 +124,8 @@ impl<R: DataStoreReplacer> DataStoreCache for MemDiskStoreCache<R> {
         // TODO: Refine the lock.
         if let Some(mem_store) = &self.mem_store {
             let mut mem_replacer = self.mem_replacer.as_ref().unwrap().write().await;
-            if let Some((data_store_key, _)) = mem_replacer.get(&remote_location) {
+            if let Some(replacer_value) = mem_replacer.get(&remote_location) {
+                let data_store_key = replacer_value.as_value();
                 match mem_store.read_data(data_store_key) {
                     Ok(Some(rx)) => return Ok(Some(rx)),
                     Ok(None) => {
@@ -100,7 +140,8 @@ impl<R: DataStoreReplacer> DataStoreCache for MemDiskStoreCache<R> {
 
         let mut disk_replacer = self.disk_replacer.write().await;
         match disk_replacer.get(&remote_location) {
-            Some((data_store_key, _)) => {
+            Some(replacer_value) => {
+                let data_store_key = replacer_value.as_value();
                 if let Some(data) = self.disk_store.read_data(data_store_key).await? {
                     Ok(Some(data))
                 } else {
@@ -120,9 +161,8 @@ impl<R: DataStoreReplacer> DataStoreCache for MemDiskStoreCache<R> {
         // TODO(lanlou): Also write the data to network.
         let mut bytes_to_disk = None;
         let mut bytes_mem_written = 0;
-        let mut evicted_bytes_to_disk: Option<
-            Vec<(ParpulseDataStoreCacheKey, (Vec<Bytes>, usize))>,
-        > = None;
+        let mut evicted_bytes_to_disk: Option<Vec<(MemDiskStoreReplacerKey, (Vec<Bytes>, usize))>> =
+            None;
         // 1. If the mem_store is enabled, first try to write the data to memory.
         // Note: Only file which size < mem_max_file_size can be written to memory.
         if let Some(mem_store) = &mut self.mem_store {
@@ -151,7 +191,7 @@ impl<R: DataStoreReplacer> DataStoreCache for MemDiskStoreCache<R> {
                 let mut mem_replacer = self.mem_replacer.as_ref().unwrap().write().await;
                 let replacer_put_status = mem_replacer.put(
                     remote_location.clone(),
-                    (remote_location.clone(), bytes_mem_written),
+                    MemDiskStoreReplacerValue::new(remote_location.clone(), bytes_mem_written),
                 );
                 // Insertion fails.
                 if replacer_put_status.is_none() {
@@ -186,7 +226,10 @@ impl<R: DataStoreReplacer> DataStoreCache for MemDiskStoreCache<R> {
                     .await?;
                 let mut disk_replacer = self.disk_replacer.write().await;
                 if disk_replacer
-                    .put(remote_location_evicted, (disk_store_key.clone(), data_size))
+                    .put(
+                        remote_location_evicted,
+                        MemDiskStoreReplacerValue::new(disk_store_key.clone(), data_size),
+                    )
                     .is_none()
                 {
                     self.disk_store.clean_data(&disk_store_key).await?;
@@ -210,7 +253,10 @@ impl<R: DataStoreReplacer> DataStoreCache for MemDiskStoreCache<R> {
             .await?;
         let mut disk_replacer = self.disk_replacer.write().await;
         if disk_replacer
-            .put(remote_location, (disk_store_key.clone(), data_size))
+            .put(
+                remote_location,
+                MemDiskStoreReplacerValue::new(disk_store_key.clone(), data_size),
+            )
             .is_none()
         {
             self.disk_store.clean_data(&disk_store_key).await?;
@@ -223,7 +269,7 @@ impl<R: DataStoreReplacer> DataStoreCache for MemDiskStoreCache<R> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        cache::policy::lru::LruReplacer,
+        cache::replacer::lru::LruReplacer,
         storage_reader::{s3_diskmock::MockS3Reader, AsyncStorageReader},
     };
 
