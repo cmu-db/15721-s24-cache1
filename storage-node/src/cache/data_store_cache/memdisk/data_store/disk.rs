@@ -21,6 +21,7 @@ pub struct DiskStore {
 
 impl Drop for DiskStore {
     fn drop(&mut self) {
+        println!("{}", self.base_path.clone());
         fs::remove_dir_all(self.base_path.clone()).expect("remove cache files failed");
     }
 }
