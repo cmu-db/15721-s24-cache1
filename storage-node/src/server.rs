@@ -1,11 +1,12 @@
 use futures::lock::Mutex;
+use log::{info, warn};
 use std::sync::Arc;
-use storage_common::RequestParams;
+use storage_common::{RequestParams, S3Request};
 use tokio_stream::wrappers::ReceiverStream;
 use warp::{Filter, Rejection};
 
 use crate::{
-    cache::{data_store_cache::memdisk::MemDiskStoreCache, policy::lru::LruReplacer},
+    cache::{data_store_cache::memdisk::MemDiskStoreCache, replacer::lru::LruReplacer},
     error::ParpulseResult,
     storage_manager::StorageManager,
 };
@@ -21,15 +22,30 @@ pub async fn storage_node_serve() -> ParpulseResult<()> {
     // TODO: try to use more fine-grained lock instead of locking the whole storage_manager
     let storage_manager = Arc::new(Mutex::new(StorageManager::new(data_store_cache)));
 
-    let route = warp::path!("file" / String)
+    let route = warp::path!("file")
         .and(warp::path::end())
-        .and_then(move |file_name: String| {
+        .and(warp::query::<S3Request>())
+        .and_then(move |params: S3Request| {
             let storage_manager = storage_manager.clone();
+            if params.is_test {
+                info!(
+                    "Received test request for bucket: {}, keys: {:?}",
+                    params.bucket, params.keys
+                );
+            } else {
+                info!(
+                    "Received request for bucket: {}, keys: {:?}",
+                    params.bucket, params.keys
+                );
+            }
             async move {
-                println!("File Name: {}", file_name);
-                let bucket = "tests-parquet".to_string();
-                let keys = vec![file_name];
-                let request = RequestParams::S3((bucket, keys));
+                let bucket = params.bucket;
+                let keys = params.keys;
+                let request = if params.is_test {
+                    RequestParams::MockS3((bucket, vec![keys]))
+                } else {
+                    RequestParams::S3((bucket, vec![keys]))
+                };
                 let result = storage_manager.lock().await.get_data(request).await;
                 let data_rx = result.unwrap();
 
@@ -46,7 +62,16 @@ pub async fn storage_node_serve() -> ParpulseResult<()> {
             }
         });
 
-    warp::serve(route).run(([127, 0, 0, 1], 3030)).await;
+    // Catch a request that does not match any of the routes above.
+    let catch_all = warp::any()
+        .and(warp::path::full())
+        .map(|path: warp::path::FullPath| {
+            warn!("Catch all route hit. Path: {}", path.as_str());
+            warp::http::StatusCode::NOT_FOUND
+        });
+
+    let routes = route.or(catch_all);
+    warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
 
     Ok(())
 }
@@ -72,7 +97,8 @@ mod tests {
         // Give the server some time to start
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-        let url = "http://localhost:3030/file/userdata1.parquet";
+        let url =
+            "http://localhost:3030/file?bucket=tests-parquet&keys=userdata1.parquet&is_test=true";
         let client = Client::new();
         let mut response = client
             .get(url)

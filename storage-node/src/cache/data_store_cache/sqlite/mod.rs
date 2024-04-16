@@ -8,7 +8,9 @@ use rusqlite::Connection;
 use tokio::sync::{mpsc::Receiver, RwLock};
 
 use crate::{
-    cache::policy::DataStoreReplacer, error::ParpulseResult, storage_reader::StorageReaderStream,
+    cache::replacer::{DataStoreReplacer, ReplacerValue},
+    error::ParpulseResult,
+    storage_reader::StorageReaderStream,
 };
 
 use super::DataStoreCache;
@@ -16,13 +18,36 @@ use super::DataStoreCache;
 const SQLITE_CACHE_TABLE_NAME: &str = "parpulse_cache";
 const SQLITE_CACHE_COLUMN_NAME: &str = "content";
 
-pub struct SqliteStoreCache<R: DataStoreReplacer> {
+pub type SqliteStoreReplacerKey = String;
+pub struct SqliteStoreReplacerValue {
+    pub(crate) row_id: i64,
+    pub(crate) size: usize,
+}
+
+impl ReplacerValue for SqliteStoreReplacerValue {
+    type Value = i64;
+
+    fn into_value(self) -> Self::Value {
+        self.row_id
+    }
+
+    fn as_value(&self) -> &Self::Value {
+        &self.row_id
+    }
+
+    fn size(&self) -> usize {
+        self.size
+    }
+}
+
+pub struct SqliteStoreCache<R: DataStoreReplacer<SqliteStoreReplacerKey, SqliteStoreReplacerValue>>
+{
     replacer: RwLock<R>,
     sqlite_base_path: String,
     db: Connection,
 }
 
-impl<R: DataStoreReplacer> SqliteStoreCache<R> {
+impl<R: DataStoreReplacer<SqliteStoreReplacerKey, SqliteStoreReplacerValue>> SqliteStoreCache<R> {
     pub fn new(replacer: R, sqlite_base_path: String) -> ParpulseResult<Self> {
         let db = Connection::open(sqlite_base_path.clone())?;
 
@@ -40,7 +65,9 @@ impl<R: DataStoreReplacer> SqliteStoreCache<R> {
     }
 }
 
-impl<R: DataStoreReplacer> Drop for SqliteStoreCache<R> {
+impl<R: DataStoreReplacer<SqliteStoreReplacerKey, SqliteStoreReplacerValue>> Drop
+    for SqliteStoreCache<R>
+{
     fn drop(&mut self) {
         // FIXME(Yuanxin): close sqlite connection before removing the db files?
         // self.db.close().expect("close sqlite connection failed");
@@ -49,14 +76,16 @@ impl<R: DataStoreReplacer> Drop for SqliteStoreCache<R> {
 }
 
 #[async_trait]
-impl<R: DataStoreReplacer> DataStoreCache for SqliteStoreCache<R> {
+impl<R: DataStoreReplacer<SqliteStoreReplacerKey, SqliteStoreReplacerValue>> DataStoreCache
+    for SqliteStoreCache<R>
+{
     async fn get_data_from_cache(
         &mut self,
         remote_location: String,
     ) -> ParpulseResult<Option<Receiver<ParpulseResult<Bytes>>>> {
         let mut replacer = self.replacer.write().await;
-        if let Some((data_store_key, _)) = replacer.get(&remote_location) {
-            let data_store_key = data_store_key.clone();
+        if let Some(replacer_value) = replacer.get(&remote_location) {
+            let data_store_key = replacer_value.as_value();
             let (tx, rx) = tokio::sync::mpsc::channel(1);
             tokio::spawn(async move {
                 let data = Bytes::from("Hello, World!");

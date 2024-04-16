@@ -1,15 +1,16 @@
-/// LRU-K cache implementation.
+/// LRU-K replacer implementation.
 /// Credit: https://doi.org/10.1145/170036.170081
+use log::{debug, warn};
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
+use super::DataStoreReplacer;
 use super::ReplacerKey;
 use super::ReplacerValue;
-use super::{DataStoreReplacer, ParpulseReplacerKey, ParpulseReplacerValue};
 
 type Timestamp = i32;
 
-/// Represents a node in the LRU-K cache.
+/// Represents a node in the LRU-K replacer.
 ///
 /// Each node contains a value of type `V` and a history of timestamps.
 /// The history is stored as a `VecDeque<Timestamp>`, where the most recent
@@ -19,13 +20,13 @@ struct LruKNode<V: ReplacerValue> {
     history: VecDeque<Timestamp>,
 }
 
-/// Represents an LRU-K cache.
+/// Represents an LRU-K replacer.
 ///
 /// The LRU-K algorithm evicts a node whose backward k-distance is maximum of all
 /// nodes. Backward k-distance is computed as the difference in time between current
 /// timestamp and the timestamp of kth previous access. A node with fewer than k
 /// historical accesses is given +inf as its backward k-distance. When multiple nodes
-/// have +inf backward k-distance, the cache evicts the node with the earliest
+/// have +inf backward k-distance, the replacer evicts the node with the earliest
 /// overall timestamp (i.e., the frame whose least-recent recorded access is the
 /// overall least recent access, overall, out of all nodes).
 pub struct LruKReplacer<K: ReplacerKey, V: ReplacerValue> {
@@ -77,7 +78,7 @@ impl<K: ReplacerKey, V: ReplacerValue> LruKReplacer<K, V> {
         if found {
             if let Some(key) = key_to_evict {
                 // TODO: Should have better logging
-                // println!("-------- Evicting Key: {:?} --------", key);
+                debug!("-------- Evicting Key: {:?} --------", key);
                 if let Some(node) = self.cache_map.remove(&key) {
                     self.size -= node.value.size();
                 }
@@ -107,9 +108,9 @@ impl<K: ReplacerKey, V: ReplacerValue> LruKReplacer<K, V> {
     fn put_value(&mut self, key: K, value: V) -> Option<Vec<K>> {
         if value.size() > self.max_capacity {
             // If the object size is greater than the max capacity, we do not insert the
-            // object into the cache.
-            println!("Warning: The size of the value is greater than the max capacity",);
-            println!(
+            // object into the replacer.
+            warn!("The size of the value is greater than the max capacity",);
+            warn!(
                 "Key: {:?}, Value: {:?}, Value size: {:?}, Max capacity: {:?}",
                 key,
                 value.as_value(),
@@ -141,7 +142,7 @@ impl<K: ReplacerKey, V: ReplacerValue> LruKReplacer<K, V> {
             let key_to_evict = self.evict(&key);
             debug_assert!(
                 key_to_evict.is_some(),
-                "key {:?} should have been evicted when cache size is greater than max capacity",
+                "key {:?} should have been evicted when replacer size is greater than max capacity",
                 key
             );
             if let Some(evicted_key) = key_to_evict {
@@ -166,20 +167,16 @@ impl<K: ReplacerKey, V: ReplacerValue> LruKReplacer<K, V> {
     }
 }
 
-impl DataStoreReplacer for LruKReplacer<ParpulseReplacerKey, ParpulseReplacerValue> {
-    fn get(&mut self, key: &ParpulseReplacerKey) -> Option<&ParpulseReplacerValue> {
+impl<K: ReplacerKey, V: ReplacerValue> DataStoreReplacer<K, V> for LruKReplacer<K, V> {
+    fn get(&mut self, key: &K) -> Option<&V> {
         self.get_value(key)
     }
 
-    fn put(
-        &mut self,
-        key: ParpulseReplacerKey,
-        value: ParpulseReplacerValue,
-    ) -> Option<Vec<ParpulseReplacerKey>> {
+    fn put(&mut self, key: K, value: V) -> Option<Vec<K>> {
         self.put_value(key, value)
     }
 
-    fn peek(&self, key: &ParpulseReplacerKey) -> Option<&ParpulseReplacerValue> {
+    fn peek(&self, key: &K) -> Option<&V> {
         self.peek_value(key)
     }
 
@@ -211,35 +208,43 @@ impl DataStoreReplacer for LruKReplacer<ParpulseReplacerKey, ParpulseReplacerVal
 
 #[cfg(test)]
 mod tests {
-    use super::{DataStoreReplacer, LruKReplacer, ParpulseReplacerKey, ParpulseReplacerValue};
+    use crate::cache::replacer::{
+        tests::{ParpulseTestReplacerKey, ParpulseTestReplacerValue},
+        DataStoreReplacer,
+    };
+
+    use super::LruKReplacer;
 
     #[test]
     fn test_new() {
-        let mut cache = LruKReplacer::<ParpulseReplacerKey, ParpulseReplacerValue>::new(10, 2);
-        assert_eq!(cache.max_capacity(), 10);
-        assert_eq!(cache.size(), 0);
-        cache.set_max_capacity(20);
-        assert_eq!(cache.max_capacity(), 20);
+        let mut replacer =
+            LruKReplacer::<ParpulseTestReplacerKey, ParpulseTestReplacerValue>::new(10, 2);
+        assert_eq!(replacer.max_capacity(), 10);
+        assert_eq!(replacer.size(), 0);
+        replacer.set_max_capacity(20);
+        assert_eq!(replacer.max_capacity(), 20);
     }
 
     #[test]
     fn test_peek_and_set() {
-        let mut cache = LruKReplacer::<ParpulseReplacerKey, ParpulseReplacerValue>::new(10, 2);
+        let mut replacer =
+            LruKReplacer::<ParpulseTestReplacerKey, ParpulseTestReplacerValue>::new(10, 2);
         let key = "key1".to_string();
         let value = "value1".to_string();
-        assert_eq!(cache.peek(&key), None);
-        assert!(cache.put(key.clone(), (value.clone(), 1)).is_some());
-        assert_eq!(cache.peek(&key), Some(&(value.clone(), 1)));
-        assert_eq!(cache.len(), 1);
-        assert_eq!(cache.size(), 1);
-        assert!(!cache.is_empty());
-        cache.clear();
-        assert!(cache.is_empty());
+        assert_eq!(replacer.peek(&key), None);
+        assert!(replacer.put(key.clone(), (value.clone(), 1)).is_some());
+        assert_eq!(replacer.peek(&key), Some(&(value.clone(), 1)));
+        assert_eq!(replacer.len(), 1);
+        assert_eq!(replacer.size(), 1);
+        assert!(!replacer.is_empty());
+        replacer.clear();
+        assert!(replacer.is_empty());
     }
 
     #[test]
     fn test_evict() {
-        let mut cache = LruKReplacer::<ParpulseReplacerKey, ParpulseReplacerValue>::new(13, 2);
+        let mut replacer =
+            LruKReplacer::<ParpulseTestReplacerKey, ParpulseTestReplacerValue>::new(13, 2);
         let key1 = "key1".to_string();
         let key2 = "key2".to_string();
         let key3 = "key3".to_string();
@@ -250,33 +255,34 @@ mod tests {
         let value3 = "value3".to_string();
         let value4 = "value4".to_string();
         let value5 = "value5".to_string();
-        cache.put(key1.clone(), (value1.clone(), 1));
-        cache.put(key2.clone(), (value2.clone(), 2));
-        cache.put(key3.clone(), (value3.clone(), 3));
-        cache.put(key4.clone(), (value4.clone(), 4));
-        assert_eq!(cache.current_timestamp(), 4);
-        assert_eq!(cache.get(&key3), Some(&(value3.clone(), 3)));
-        assert_eq!(cache.get(&key4), Some(&(value4.clone(), 4)));
-        assert_eq!(cache.get(&key1), Some(&(value1.clone(), 1)));
-        assert_eq!(cache.get(&key2), Some(&(value2.clone(), 2)));
-        assert_eq!(cache.current_timestamp(), 8);
+        replacer.put(key1.clone(), (value1.clone(), 1));
+        replacer.put(key2.clone(), (value2.clone(), 2));
+        replacer.put(key3.clone(), (value3.clone(), 3));
+        replacer.put(key4.clone(), (value4.clone(), 4));
+        assert_eq!(replacer.current_timestamp(), 4);
+        assert_eq!(replacer.get(&key3), Some(&(value3.clone(), 3)));
+        assert_eq!(replacer.get(&key4), Some(&(value4.clone(), 4)));
+        assert_eq!(replacer.get(&key1), Some(&(value1.clone(), 1)));
+        assert_eq!(replacer.get(&key2), Some(&(value2.clone(), 2)));
+        assert_eq!(replacer.current_timestamp(), 8);
         // Now the kth (i.e. 2nd) order from old to new is [1, 2, 3, 4]
-        cache.put(key5.clone(), (value5.clone(), 4));
-        assert_eq!(cache.get(&key1), None); // key1 should be evicted
+        replacer.put(key5.clone(), (value5.clone(), 4));
+        assert_eq!(replacer.get(&key1), None); // key1 should be evicted
 
-        assert_eq!(cache.get(&key2), Some(&(value2.clone(), 2)));
-        assert_eq!(cache.get(&key4), Some(&(value4.clone(), 4)));
-        assert_eq!(cache.get(&key3), Some(&(value3.clone(), 3)));
-        assert_eq!(cache.get(&key5), Some(&(value5.clone(), 4)));
+        assert_eq!(replacer.get(&key2), Some(&(value2.clone(), 2)));
+        assert_eq!(replacer.get(&key4), Some(&(value4.clone(), 4)));
+        assert_eq!(replacer.get(&key3), Some(&(value3.clone(), 3)));
+        assert_eq!(replacer.get(&key5), Some(&(value5.clone(), 4)));
         // Now the kth (i.e. 2nd) order from old to new is [3, 4, 2, 5]
-        cache.put(key1.clone(), (value1.clone(), 1));
-        assert_eq!(cache.get(&key3), None); // key3 should be evicted
-        assert_eq!(cache.current_timestamp(), 14); // When get fails, the timestamp should not be updated
+        replacer.put(key1.clone(), (value1.clone(), 1));
+        assert_eq!(replacer.get(&key3), None); // key3 should be evicted
+        assert_eq!(replacer.current_timestamp(), 14); // When get fails, the timestamp should not be updated
     }
 
     #[test]
     fn test_infinite() {
-        let mut cache = LruKReplacer::<ParpulseReplacerKey, ParpulseReplacerValue>::new(6, 2);
+        let mut replacer =
+            LruKReplacer::<ParpulseTestReplacerKey, ParpulseTestReplacerValue>::new(6, 2);
         let key1 = "key1".to_string();
         let key2 = "key2".to_string();
         let key3 = "key3".to_string();
@@ -285,31 +291,32 @@ mod tests {
         let value2 = "value2".to_string();
         let value3 = "value3".to_string();
         let value4 = "value4".to_string();
-        cache.put(key1.clone(), (value1.clone(), 1));
-        cache.put(key2.clone(), (value2.clone(), 2));
-        cache.put(key3.clone(), (value3.clone(), 3));
-        cache.put(key4.clone(), (value4.clone(), 4));
-        assert_eq!(cache.current_timestamp(), 4);
-        assert_eq!(cache.get(&key1), None); // Key1 should be evicted as it has infinite k distance and the earliest overall timestamp, same for key2 and key3
-        assert_eq!(cache.get(&key2), None);
-        assert_eq!(cache.get(&key3), None);
-        assert_eq!(cache.size(), 4); // Only key4 should be in the cache
+        replacer.put(key1.clone(), (value1.clone(), 1));
+        replacer.put(key2.clone(), (value2.clone(), 2));
+        replacer.put(key3.clone(), (value3.clone(), 3));
+        replacer.put(key4.clone(), (value4.clone(), 4));
+        assert_eq!(replacer.current_timestamp(), 4);
+        assert_eq!(replacer.get(&key1), None); // Key1 should be evicted as it has infinite k distance and the earliest overall timestamp, same for key2 and key3
+        assert_eq!(replacer.get(&key2), None);
+        assert_eq!(replacer.get(&key3), None);
+        assert_eq!(replacer.size(), 4); // Only key4 should be in the replacer
     }
 
     #[test]
     fn test_put_same_key() {
-        let mut cache = LruKReplacer::<ParpulseReplacerKey, ParpulseReplacerValue>::new(10, 2);
-        cache.put("key1".to_string(), ("value1".to_string(), 1));
-        cache.put("key1".to_string(), ("value2".to_string(), 2));
-        cache.put("key1".to_string(), ("value3".to_string(), 3));
-        cache.put("key1".to_string(), ("value3".to_string(), 4));
-        assert_eq!(cache.len(), 1);
-        assert_eq!(cache.size(), 4);
-        cache.put("key1".to_string(), ("value4".to_string(), 100)); // Should not be inserted
+        let mut replacer =
+            LruKReplacer::<ParpulseTestReplacerKey, ParpulseTestReplacerValue>::new(10, 2);
+        replacer.put("key1".to_string(), ("value1".to_string(), 1));
+        replacer.put("key1".to_string(), ("value2".to_string(), 2));
+        replacer.put("key1".to_string(), ("value3".to_string(), 3));
+        replacer.put("key1".to_string(), ("value3".to_string(), 4));
+        assert_eq!(replacer.len(), 1);
+        assert_eq!(replacer.size(), 4);
+        replacer.put("key1".to_string(), ("value4".to_string(), 100)); // Should not be inserted
         assert_eq!(
-            cache.get(&"key1".to_string()),
+            replacer.get(&"key1".to_string()),
             Some(&("value3".to_string(), 4))
         );
-        assert_eq!(cache.get(&("key2".to_string())), None);
+        assert_eq!(replacer.get(&("key2".to_string())), None);
     }
 }
