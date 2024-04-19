@@ -175,6 +175,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_sqlite_store_cache() {
+        // FIXME:
+        // Currently the unit test cannot pass. We need to have the exact size of the blob so that we
+        // won't read extra `\0` bytes.
         let tmp = tempfile::tempdir().unwrap();
         let sqlite_base_path = tmp.path().to_owned().join(Path::new("sqlite_test.db"));
         let replacer = LruReplacer::new(1024);
