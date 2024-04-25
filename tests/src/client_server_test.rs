@@ -33,7 +33,7 @@ mod tests {
         let storage_client =
             StorageClientImpl::new("http://127.0.0.1:3030", "http://127.0.0.1:3031")
                 .expect("Failed to create storage client.");
-        let request = StorageRequest::Table(1);
+        let request = StorageRequest::Table(0);
         let mut receiver = storage_client
             .request_data_test(request)
             .await
@@ -47,16 +47,23 @@ mod tests {
         let first_batch = &record_batches[0];
         assert_eq!(first_batch.num_columns(), 13);
 
-        let first_names = StringArray::from(vec!["Amanda", "Albert", "Evelyn"]);
-        let last_names = StringArray::from(vec!["Jordan", "Freeman", "Morgan"]);
-        assert_eq!(
-            first_batch.column(2).as_any().downcast_ref::<StringArray>(),
-            Some(&first_names)
-        );
-        assert_eq!(
-            first_batch.column(3).as_any().downcast_ref::<StringArray>(),
-            Some(&last_names)
-        );
+        let real_first_names = StringArray::from(vec!["Amanda", "Albert", "Evelyn"]);
+        let read_last_names = StringArray::from(vec!["Jordan", "Freeman", "Morgan"]);
+        let first_names = first_batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let last_names = first_batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        // Check the first three entries in the first and last name columns.
+        for i in 0..3 {
+            assert_eq!(first_names.value(i), real_first_names.value(i));
+            assert_eq!(last_names.value(i), read_last_names.value(i));
+        }
 
         server_handle.abort();
     }
@@ -89,16 +96,23 @@ mod tests {
         let first_batch = &record_batches[0];
         assert_eq!(first_batch.num_columns(), 13);
 
-        let first_names = StringArray::from(vec!["Amanda", "Albert", "Evelyn"]);
-        let last_names = StringArray::from(vec!["Jordan", "Freeman", "Morgan"]);
-        assert_eq!(
-            first_batch.column(2).as_any().downcast_ref::<StringArray>(),
-            Some(&first_names)
-        );
-        assert_eq!(
-            first_batch.column(3).as_any().downcast_ref::<StringArray>(),
-            Some(&last_names)
-        );
+        let real_first_names = StringArray::from(vec!["Amanda", "Albert", "Evelyn"]);
+        let read_last_names = StringArray::from(vec!["Jordan", "Freeman", "Morgan"]);
+        let first_names = first_batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let last_names = first_batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        // Check the first three entries in the first and last name columns.
+        for i in 0..3 {
+            assert_eq!(first_names.value(i), real_first_names.value(i));
+            assert_eq!(last_names.value(i), read_last_names.value(i));
+        }
 
         server_handle.abort();
     }

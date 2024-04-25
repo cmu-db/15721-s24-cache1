@@ -17,3 +17,4 @@ parquet = { version = "51.0.0", features = ["async"] }
 arrow = "51.0.0"
 mockito = "1.4.0"
 log = "0.4"
+lazy_static = "1.4"

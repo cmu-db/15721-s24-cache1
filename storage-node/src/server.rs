@@ -47,18 +47,31 @@ pub async fn storage_node_serve() -> ParpulseResult<()> {
                     RequestParams::S3((bucket, vec![keys]))
                 };
                 let result = storage_manager.lock().await.get_data(request).await;
-                let data_rx = result.unwrap();
-
-                let stream = ReceiverStream::new(data_rx);
-                let body = warp::hyper::Body::wrap_stream(stream);
-                let response = warp::http::Response::builder()
-                    .header("Content-Type", "text/plain")
-                    .body(body)
-                    .unwrap();
-                Ok::<_, Rejection>(warp::reply::with_status(
-                    response,
-                    warp::http::StatusCode::OK,
-                ))
+                match result {
+                    Ok(data_rx) => {
+                        let stream = ReceiverStream::new(data_rx);
+                        let body = warp::hyper::Body::wrap_stream(stream);
+                        let response = warp::http::Response::builder()
+                            .header("Content-Type", "text/plain")
+                            .body(body)
+                            .unwrap();
+                        Ok::<_, Rejection>(warp::reply::with_status(
+                            response,
+                            warp::http::StatusCode::OK,
+                        ))
+                    }
+                    Err(e) => {
+                        let error_message = format!("Failed to get data: {}", e);
+                        let response = warp::http::Response::builder()
+                            .status(warp::http::StatusCode::INTERNAL_SERVER_ERROR)
+                            .body(error_message.into())
+                            .unwrap();
+                        Ok::<_, Rejection>(warp::reply::with_status(
+                            response,
+                            warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        ))
+                    }
+                }
             }
         });
 
