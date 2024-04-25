@@ -98,7 +98,13 @@ mod tests {
         assert_eq!(first_batch.num_columns(), 20);
 
         // Check the first 5 columns of the first row.
-        let real_first_row = [0.191954, 0.481544, 0.470787, 0.779391, 0.218772];
+        let real_first_row = [
+            0.19195386139992177,
+            0.4815442611405789,
+            0.47078682326631927,
+            0.7793912218913533,
+            0.21877220521846885,
+        ];
         for (i, &real_value) in real_first_row.iter().enumerate() {
             let column = first_batch
                 .column(i)
