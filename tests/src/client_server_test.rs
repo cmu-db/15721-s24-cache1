@@ -98,14 +98,14 @@ mod tests {
         assert_eq!(first_batch.num_columns(), 20);
 
         // Check the first 5 columns of the first row.
-        let real_first_row = vec![0.191954, 0.481544, 0.470787, 0.779391, 0.218772];
-        for i in 0..5 {
+        let real_first_row = [0.191954, 0.481544, 0.470787, 0.779391, 0.218772];
+        for (i, &real_value) in real_first_row.iter().enumerate() {
             let column = first_batch
                 .column(i)
                 .as_any()
                 .downcast_ref::<Float64Array>()
                 .unwrap();
-            assert_eq!(column.value(0), real_first_row[i]);
+            assert_eq!(column.value(0), real_value);
         }
 
         server_handle.abort();
