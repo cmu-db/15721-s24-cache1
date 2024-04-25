@@ -14,7 +14,8 @@ use crate::{
 const CACHE_BASE_PATH: &str = "cache/";
 
 pub async fn storage_node_serve() -> ParpulseResult<()> {
-    let dummy_size = 1000000;
+    // Should at least be able to store one 100MB file in the cache.
+    let dummy_size = 100 * 1024 * 1024;
     // TODO: Read the type of the cache from config.
     let cache = LruReplacer::new(dummy_size);
     // TODO: cache_base_path should be from config
