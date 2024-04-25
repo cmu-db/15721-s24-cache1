@@ -1,3 +1,10 @@
+"""
+This script generates access pattern for a set of files with a Zipfian distribution.
+
+Usage:
+    python scripts/generate_traces.py --num_files 10 --skew_param 1.2 --num_accesses 100 -o <YOUR_OUTPUT_FILE>
+"""
+
 import numpy as np
 import csv
 import argparse
