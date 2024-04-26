@@ -14,7 +14,7 @@ use crate::{
 
 const CACHE_BASE_PATH: &str = "cache/";
 
-pub async fn storage_node_serve(ip_addr: &String, port: u16) -> ParpulseResult<()> {
+pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> {
     // Should at least be able to store one 100MB file in the cache.
     let dummy_size = 100 * 1024 * 1024;
     // TODO: Read the type of the cache from config.
@@ -107,9 +107,7 @@ mod tests {
 
         // Start the server
         let server_handle = tokio::spawn(async move {
-            storage_node_serve(&"127.0.0.1".to_string(), 3030)
-                .await
-                .unwrap();
+            storage_node_serve("127.0.0.1", 3030).await.unwrap();
         });
 
         // Give the server some time to start
