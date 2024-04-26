@@ -155,6 +155,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
     async fn put_data_to_cache(
         &mut self,
         remote_location: String,
+        _data_size: usize,
         mut data_stream: StorageReaderStream,
     ) -> ParpulseResult<usize> {
         // TODO: Refine the lock.
@@ -295,35 +296,45 @@ mod tests {
         let keys = vec!["what-can-i-hold-you-with".to_string()];
         let data1_key = bucket.clone() + &keys[0];
         let reader = MockS3Reader::new(bucket.clone(), keys.clone()).await;
-        let mut data_size = cache
-            .put_data_to_cache(data1_key.clone(), reader.into_stream().await.unwrap())
+        let data_size = reader.get_object_size().await.unwrap();
+        let written_data_size = cache
+            .put_data_to_cache(
+                data1_key.clone(),
+                data_size,
+                reader.into_stream().await.unwrap(),
+            )
             .await
             .unwrap();
-        assert_eq!(data_size, 930);
+        assert_eq!(written_data_size, 930);
 
         let data2_key = bucket.clone() + &keys[0] + "1";
         let reader = MockS3Reader::new(bucket.clone(), keys).await;
-        data_size = cache
-            .put_data_to_cache(data2_key.clone(), reader.into_stream().await.unwrap())
+        let data_size = reader.get_object_size().await.unwrap();
+        let mut written_data_size = cache
+            .put_data_to_cache(
+                data2_key.clone(),
+                data_size,
+                reader.into_stream().await.unwrap(),
+            )
             .await
             .unwrap();
-        assert_eq!(data_size, 930);
+        assert_eq!(written_data_size, 930);
 
-        data_size = 0;
+        written_data_size = 0;
         let mut rx = cache.get_data_from_cache(data1_key).await.unwrap().unwrap();
         while let Some(data) = rx.recv().await {
             let data = data.unwrap();
-            data_size += data.len();
+            written_data_size += data.len();
         }
-        assert_eq!(data_size, 930);
+        assert_eq!(written_data_size, 930);
 
-        data_size = 0;
+        written_data_size = 0;
         let mut rx = cache.get_data_from_cache(data2_key).await.unwrap().unwrap();
         while let Some(data) = rx.recv().await {
             let data = data.unwrap();
-            data_size += data.len();
+            written_data_size += data.len();
         }
-        assert_eq!(data_size, 930);
+        assert_eq!(written_data_size, 930);
     }
 
     #[tokio::test]
@@ -340,35 +351,42 @@ mod tests {
         let keys = vec!["userdata1.parquet".to_string()];
         let remote_location = bucket.clone() + &keys[0];
         let reader = MockS3Reader::new(bucket.clone(), keys).await;
-        let mut data_size = cache
-            .put_data_to_cache(remote_location.clone(), reader.into_stream().await.unwrap())
-            .await
-            .unwrap();
-        assert_eq!(data_size, 113629);
-
-        let keys = vec!["userdata2.parquet".to_string()];
-        let remote_location2 = bucket.clone() + &keys[0];
-        let reader = MockS3Reader::new(bucket, keys).await;
-        data_size = cache
+        let data_size = reader.get_object_size().await.unwrap();
+        let written_data_size = cache
             .put_data_to_cache(
-                remote_location2.clone(),
+                remote_location.clone(),
+                data_size,
                 reader.into_stream().await.unwrap(),
             )
             .await
             .unwrap();
-        assert_eq!(data_size, 112193);
+        assert_eq!(written_data_size, 113629);
+
+        let keys = vec!["userdata2.parquet".to_string()];
+        let remote_location2 = bucket.clone() + &keys[0];
+        let reader = MockS3Reader::new(bucket, keys).await;
+        let data_size = reader.get_object_size().await.unwrap();
+        let mut written_data_size = cache
+            .put_data_to_cache(
+                remote_location2.clone(),
+                data_size,
+                reader.into_stream().await.unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(written_data_size, 112193);
 
         let mut rx = cache
             .get_data_from_cache(remote_location)
             .await
             .unwrap()
             .unwrap();
-        data_size = 0;
+        written_data_size = 0;
         while let Some(data) = rx.recv().await {
             let data = data.unwrap();
-            data_size += data.len();
+            written_data_size += data.len();
         }
-        assert_eq!(data_size, 113629);
+        assert_eq!(written_data_size, 113629);
     }
 
     #[tokio::test]
@@ -389,36 +407,46 @@ mod tests {
         let keys = vec!["what-can-i-hold-you-with".to_string()];
         let data1_key = bucket.clone() + &keys[0];
         let reader = MockS3Reader::new(bucket.clone(), keys.clone()).await;
-        let mut data_size = cache
-            .put_data_to_cache(data1_key.clone(), reader.into_stream().await.unwrap())
+        let data_size = reader.get_object_size().await.unwrap();
+        let written_data_size = cache
+            .put_data_to_cache(
+                data1_key.clone(),
+                data_size,
+                reader.into_stream().await.unwrap(),
+            )
             .await
             .unwrap();
-        assert_eq!(data_size, 930);
+        assert_eq!(written_data_size, 930);
 
         let bucket = "tests-parquet".to_string();
         let keys = vec!["userdata1.parquet".to_string()];
         let data2_key = bucket.clone() + &keys[0];
         let reader = MockS3Reader::new(bucket.clone(), keys).await;
-        data_size = cache
-            .put_data_to_cache(data2_key.clone(), reader.into_stream().await.unwrap())
+        let data_size = reader.get_object_size().await.unwrap();
+        let mut written_data_size = cache
+            .put_data_to_cache(
+                data2_key.clone(),
+                data_size,
+                reader.into_stream().await.unwrap(),
+            )
             .await
             .unwrap();
-        assert_eq!(data_size, 113629);
+        assert_eq!(written_data_size, 113629);
 
-        data_size = 0;
+        written_data_size = 0;
         let mut rx = cache.get_data_from_cache(data1_key).await.unwrap().unwrap();
         while let Some(data) = rx.recv().await {
             let data = data.unwrap();
-            data_size += data.len();
+            written_data_size += data.len();
         }
-        assert_eq!(data_size, 930);
+        assert_eq!(written_data_size, 930);
 
-        data_size = 0;
+        written_data_size = 0;
         let mut rx = cache.get_data_from_cache(data2_key).await.unwrap().unwrap();
         while let Some(data) = rx.recv().await {
             let data = data.unwrap();
-            data_size += data.len();
+            written_data_size += data.len();
         }
-        assert_eq!(data_size, 113629);
+        assert_eq!(written_data_size, 113629);
     }
 }

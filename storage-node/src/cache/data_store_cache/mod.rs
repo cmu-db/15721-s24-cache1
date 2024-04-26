@@ -16,6 +16,7 @@ pub trait DataStoreCache {
     async fn put_data_to_cache(
         &mut self,
         remote_location: String,
+        data_size: usize,
         data_stream: StorageReaderStream,
     ) -> ParpulseResult<usize>;
 }

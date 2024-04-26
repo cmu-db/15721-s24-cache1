@@ -49,15 +49,17 @@ impl<C: DataStoreCache> StorageManager<C> {
         if let Some(data_rx) = data_rx {
             Ok(data_rx)
         } else {
-            let stream = if is_s3_request {
+            let (stream, data_size) = if is_s3_request {
                 let reader = S3Reader::new(bucket.clone(), keys).await;
-                reader.into_stream().await?
+                let data_size = reader.get_object_size().await?;
+                (reader.into_stream().await?, data_size)
             } else {
                 let reader = MockS3Reader::new(bucket.clone(), keys).await;
-                reader.into_stream().await?
+                let data_size = reader.get_object_size().await?;
+                (reader.into_stream().await?, data_size)
             };
             self.data_store_cache
-                .put_data_to_cache(cache_key.clone(), stream)
+                .put_data_to_cache(cache_key.clone(), data_size, stream)
                 .await?;
             // TODO (kunle): Push down the response writer rather than calling get_data_from_cache again.
             let data_rx = self
