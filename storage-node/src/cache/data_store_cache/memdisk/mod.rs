@@ -1,6 +1,7 @@
 pub mod data_store;
 
 use futures::stream::StreamExt;
+use log::warn;
 use tokio::sync::RwLock;
 
 use crate::{
@@ -89,8 +90,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>>
                 mem_max_file_size.unwrap_or(DEFAULT_MEM_CACHE_MAX_FILE_SIZE);
             let replacer_max_capacity = mem_replacer.as_ref().unwrap().max_capacity();
             if mem_max_file_size > replacer_max_capacity {
-                // TODO: better log.
-                println!("The maximum file size > replacer's max capacity, so we set maximum file size = 1/5 of the maximum capacity.");
+                warn!("The maximum file size > replacer's max capacity, so we set maximum file size = 1/5 of the maximum capacity.");
                 // By default in this case, replacer can store at least 5 files.
                 mem_max_file_size = replacer_max_capacity / 5;
             }
