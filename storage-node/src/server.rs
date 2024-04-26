@@ -1,5 +1,6 @@
 use futures::lock::Mutex;
 use log::{info, warn};
+use std::net::IpAddr;
 use std::sync::Arc;
 use storage_common::{RequestParams, S3Request};
 use tokio_stream::wrappers::ReceiverStream;
@@ -13,7 +14,7 @@ use crate::{
 
 const CACHE_BASE_PATH: &str = "cache/";
 
-pub async fn storage_node_serve() -> ParpulseResult<()> {
+pub async fn storage_node_serve(ip_addr: &String, port: u16) -> ParpulseResult<()> {
     // Should at least be able to store one 100MB file in the cache.
     let dummy_size = 100 * 1024 * 1024;
     // TODO: Read the type of the cache from config.
@@ -85,7 +86,8 @@ pub async fn storage_node_serve() -> ParpulseResult<()> {
         });
 
     let routes = route.or(catch_all);
-    warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
+    let ip_addr: IpAddr = ip_addr.parse().unwrap();
+    warp::serve(routes).run((ip_addr, port)).await;
 
     Ok(())
 }
@@ -105,7 +107,9 @@ mod tests {
 
         // Start the server
         let server_handle = tokio::spawn(async move {
-            storage_node_serve().await.unwrap();
+            storage_node_serve(&"127.0.0.1".to_string(), 3030)
+                .await
+                .unwrap();
         });
 
         // Give the server some time to start

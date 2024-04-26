@@ -25,7 +25,9 @@ mod tests {
         // The file dir should start from storage-node.
         // Start the server
         let server_handle = tokio::spawn(async move {
-            storage_node_serve().await.unwrap();
+            storage_node_serve(&"127.0.0.1".to_string(), 3030)
+                .await
+                .unwrap();
         });
 
         // Give the server some time to start
@@ -79,7 +81,9 @@ mod tests {
     async fn test_client_server_s3() {
         // Start the server
         let server_handle = tokio::spawn(async move {
-            storage_node_serve().await.unwrap();
+            storage_node_serve(&"127.0.0.1".to_string(), 3030)
+                .await
+                .unwrap();
         });
 
         // Give the server some time to start
