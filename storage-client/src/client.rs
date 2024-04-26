@@ -32,7 +32,7 @@ lazy_static! {
             m.insert(i, format!("1m/random_data_1m_{}.parquet", i));
         }
         for i in 10..=19 {
-            m.insert(i, format!("100m/random_data_100m_{}.parquet", i - 9));
+            m.insert(i, format!("100m/random_data_100m_{}.parquet", i - 10));
         }
         m
     };

@@ -35,6 +35,7 @@ mod tests {
         let storage_client =
             StorageClientImpl::new("http://127.0.0.1:3030", "http://127.0.0.1:3031")
                 .expect("Failed to create storage client.");
+        let start_time = Instant::now();
         let request = StorageRequest::Table(0);
         let mut receiver = storage_client
             .request_data_test(request)
@@ -44,6 +45,10 @@ mod tests {
         while let Some(record_batch) = receiver.recv().await {
             record_batches.push(record_batch);
         }
+        info!(
+            "Time taken for userdata file in disk: {:?}",
+            start_time.elapsed()
+        );
         assert!(!record_batches.is_empty());
 
         let first_batch = &record_batches[0];
