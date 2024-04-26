@@ -118,22 +118,25 @@ impl DiskManager {
         }
 
         if let Some(mut stream) = stream {
-            if let Some(Ok(mut bytes_cur)) = stream.next().await {
-                loop {
-                    let disk_write_fut = TryFutureExt::into_future(file.write_all(&bytes_cur));
-                    let bytes_next_fut = stream.next().into_future();
-                    match join!(disk_write_fut, bytes_next_fut) {
-                        (Ok(_), Some(Ok(bytes_next))) => {
-                            bytes_written += bytes_cur.len();
-                            bytes_cur = bytes_next;
-                        }
-                        (Ok(_), None) => {
-                            bytes_written += bytes_cur.len();
-                            break;
-                        }
-                        (Err(e), _) => return Err(ParpulseError::Disk(e)),
-                        (Ok(_), Some(Err(e))) => return Err(e),
+            let bytes_cur = stream.next().await;
+            if bytes_cur.is_none() {
+                return Ok(bytes_written);
+            }
+            let mut bytes_cur = bytes_cur.unwrap()?;
+            loop {
+                let disk_write_fut = TryFutureExt::into_future(file.write_all(&bytes_cur));
+                let bytes_next_fut = stream.next().into_future();
+                match join!(disk_write_fut, bytes_next_fut) {
+                    (Ok(_), Some(Ok(bytes_next))) => {
+                        bytes_written += bytes_cur.len();
+                        bytes_cur = bytes_next;
                     }
+                    (Ok(_), None) => {
+                        bytes_written += bytes_cur.len();
+                        break;
+                    }
+                    (Err(e), _) => return Err(ParpulseError::Disk(e)),
+                    (Ok(_), Some(Err(e))) => return Err(e),
                 }
             }
         }
