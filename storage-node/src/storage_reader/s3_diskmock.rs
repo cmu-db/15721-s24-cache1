@@ -58,7 +58,7 @@ impl MockS3Reader {
     pub async fn get_object_size(&self) -> ParpulseResult<usize> {
         let mut size = 0;
         for file_path in &self.file_paths {
-            size += self.disk_manager.file_size(&file_path).await? as usize;
+            size += self.disk_manager.file_size(file_path).await? as usize;
         }
         Ok(size)
     }
