@@ -114,8 +114,12 @@ impl StorageClientImpl {
             Ok(rx)
         } else {
             Err(anyhow::anyhow!(
-                "Failed to download file. Response: {:?}",
-                response.status()
+                "Failed to download file. Response: {:?}, Body: {}",
+                response.status(),
+                response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| String::from("Failed to read response body"))
             ))
         }
     }
