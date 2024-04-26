@@ -17,7 +17,7 @@ use crate::{
 
 use super::{AsyncStorageReader, StorageReaderStream};
 
-const DELAY: Option<Duration> = Some(Duration::from_millis(100));
+const DELAY: Option<Duration> = Some(Duration::from_millis(1));
 const MIN_DISK_READ_SIZE: usize = 1024 * 512;
 const MAX_DISK_READ_SIZE: usize = 1024 * 1024;
 

@@ -7,7 +7,9 @@ extern crate storage_node;
 #[cfg(test)]
 mod tests {
     use arrow::array::{Float64Array, StringArray};
+    use log::info;
     use serial_test::serial;
+    use std::time::Instant;
     use storage_client::client::StorageClientImpl;
     use storage_client::{StorageClient, StorageRequest};
     use storage_common::init_logger;
@@ -82,6 +84,7 @@ mod tests {
         let storage_client =
             StorageClientImpl::new("http://127.0.0.1:3030", "http://127.0.0.1:3031")
                 .expect("Failed to create storage client.");
+        let start_time = Instant::now();
         // Requesting random_data_1m_1.parquet
         let request = StorageRequest::Table(1);
         let mut receiver = storage_client
@@ -92,6 +95,8 @@ mod tests {
         while let Some(record_batch) = receiver.recv().await {
             record_batches.push(record_batch);
         }
+
+        info!("Time taken for 1m file: {:?}", start_time.elapsed());
         assert!(!record_batches.is_empty());
 
         let first_batch = &record_batches[0];
@@ -104,6 +109,58 @@ mod tests {
             0.47078682326631927,
             0.7793912218913533,
             0.21877220521846885,
+        ];
+        for (i, &real_value) in real_first_row.iter().enumerate() {
+            let column = first_batch
+                .column(i)
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap();
+            assert_eq!(column.value(0), real_value);
+        }
+
+        server_handle.abort();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_client_server_s3_large() {
+        // Start the server
+        let server_handle = tokio::spawn(async move {
+            storage_node_serve().await.unwrap();
+        });
+
+        // Give the server some time to start
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+        let storage_client =
+            StorageClientImpl::new("http://127.0.0.1:3030", "http://127.0.0.1:3031")
+                .expect("Failed to create storage client.");
+        let start_time = Instant::now();
+        // Requesting random_data_100m_0.parquet
+        let request = StorageRequest::Table(10);
+        let mut receiver = storage_client
+            .request_data(request)
+            .await
+            .expect("Failed to get data from the server.");
+        let mut record_batches = vec![];
+        while let Some(record_batch) = receiver.recv().await {
+            record_batches.push(record_batch);
+        }
+        info!("Time taken for 100m file: {:?}", start_time.elapsed());
+
+        assert!(!record_batches.is_empty());
+
+        let first_batch = &record_batches[0];
+        assert_eq!(first_batch.num_columns(), 20);
+
+        // Check the first 5 columns of the first row.
+        let real_first_row = [
+            0.869278151694903,
+            0.5698583744743971,
+            0.5731127546817466,
+            0.9509491985107434,
+            0.3949108352357301,
         ];
         for (i, &real_value) in real_first_row.iter().enumerate() {
             let column = first_batch

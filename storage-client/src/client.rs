@@ -18,7 +18,7 @@ use crate::{StorageClient, StorageRequest, TableId};
 
 /// The batch size for the record batch.
 const BATCH_SIZE: usize = 100;
-const CHANNEL_CAPACITY: usize = 10;
+const CHANNEL_CAPACITY: usize = 32;
 const PARAM_BUCKET_KEY: &str = "bucket";
 const PARAM_KEYS_KEY: &str = "keys";
 
@@ -28,25 +28,12 @@ lazy_static! {
         // For mock s3
         m.insert(0, "userdata1.parquet".to_string());
         // All the remainings are for real s3
-        m.insert(1, "1m/random_data_1m_1.parquet".to_string());
-        m.insert(2, "1m/random_data_1m_2.parquet".to_string());
-        m.insert(3, "1m/random_data_1m_3.parquet".to_string());
-        m.insert(4, "1m/random_data_1m_4.parquet".to_string());
-        m.insert(5, "1m/random_data_1m_5.parquet".to_string());
-        m.insert(6, "1m/random_data_1m_6.parquet".to_string());
-        m.insert(7, "1m/random_data_1m_7.parquet".to_string());
-        m.insert(8, "1m/random_data_1m_8.parquet".to_string());
-        m.insert(9, "1m/random_data_1m_9.parquet".to_string());
-        m.insert(10, "100m/random_data_100m_0.parquet".to_string());
-        m.insert(11, "100m/random_data_100m_1.parquet".to_string());
-        m.insert(12, "100m/random_data_100m_2.parquet".to_string());
-        m.insert(13, "100m/random_data_100m_3.parquet".to_string());
-        m.insert(14, "100m/random_data_100m_4.parquet".to_string());
-        m.insert(15, "100m/random_data_100m_5.parquet".to_string());
-        m.insert(16, "100m/random_data_100m_6.parquet".to_string());
-        m.insert(17, "100m/random_data_100m_7.parquet".to_string());
-        m.insert(18, "100m/random_data_100m_8.parquet".to_string());
-        m.insert(19, "100m/random_data_100m_9.parquet".to_string());
+        for i in 1..=9 {
+            m.insert(i, format!("1m/random_data_1m_{}.parquet", i));
+        }
+        for i in 10..=19 {
+            m.insert(i, format!("100m/random_data_100m_{}.parquet", i - 9));
+        }
         m
     };
 }
