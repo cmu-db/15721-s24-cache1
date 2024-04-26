@@ -5,8 +5,8 @@
         "description": "The goal of this project is to develop an I/O service for an Online Analytical Processing (OLAP) database system. This service will facilitate communication between the execution engine and remote storage solutions such as Amazon S3. Additionally, a local cache will be incorporated to store recently accessed data on the local disk, thereby accelerating future data retrievals.\nThe I/O service is designed to manage requests from the execution engine and fetch pertinent data (e.g., Parquet files) from either the local cache or remote storage. It will process the data and return a stream of the decoded data to the execution engine.\nThe initial phase of this project aims to construct a fully functional I/O service following the specifications outlined above. Further enhancements, such as kernel bypass and integration of io_uring, may be considered in the future.",
         "students": [
             {
-                "name": "Someone ugly",
-                "url": "https://CHANGE_ME"
+                "name": "Yuanxin Cao",
+                "url": "https://github.com/xx01cyx"
             },
             {
                 "name": "Kunle Li",
