@@ -9,7 +9,7 @@ pub mod memdisk;
 #[async_trait]
 pub trait DataStoreCache {
     async fn get_data_from_cache(
-        &mut self,
+        &self,
         remote_location: String,
     ) -> ParpulseResult<Option<Receiver<ParpulseResult<Bytes>>>>;
 
@@ -18,7 +18,7 @@ pub trait DataStoreCache {
     /// If the data_size is not provided, the cache implementation should try to determine the size of
     /// the data.
     async fn put_data_to_cache(
-        &mut self,
+        &self,
         remote_location: String,
         data_size: Option<usize>,
         data_stream: StorageReaderStream,

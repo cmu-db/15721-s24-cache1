@@ -25,7 +25,7 @@ impl<C: DataStoreCache> StorageManager<C> {
     }
 
     pub async fn get_data(
-        &mut self,
+        &self,
         request: RequestParams,
         is_mem_disk_cache: bool,
     ) -> ParpulseResult<Receiver<ParpulseResult<Bytes>>> {
