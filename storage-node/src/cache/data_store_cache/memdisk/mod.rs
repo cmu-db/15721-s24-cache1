@@ -175,14 +175,10 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
         mut data_stream: StorageReaderStream,
     ) -> ParpulseResult<usize> {
         {
-            let mut existed = false;
-
             // If in_progress of remote_location thread fails, it will clean the data from this hash map.
-
+            let mut existed = false;
             loop {
-                let status;
-                let size;
-                let notify;
+                let (status, size, notify);
                 if let Some(((status_ref, size_ref), notify_ref)) =
                     self.status_of_keys.read().await.get(&remote_location)
                 {
@@ -547,7 +543,8 @@ mod tests {
         let keys = vec!["userdata1.parquet".to_string()];
         let remote_location = bucket.clone() + &keys[0];
         let reader = MockS3Reader::new(bucket.clone(), keys.clone()).await;
-        let reader2 = MockS3Reader::new(bucket.clone(), keys).await;
+        let reader2 = MockS3Reader::new(bucket.clone(), keys.clone()).await;
+        let reader3 = MockS3Reader::new(bucket.clone(), keys).await;
 
         let put_data_fut_1 = cache.put_data_to_cache(
             remote_location.clone(),
@@ -559,12 +556,19 @@ mod tests {
             None,
             reader2.into_stream().await.unwrap(),
         );
+        let put_data_fut_3 = cache.put_data_to_cache(
+            remote_location.clone(),
+            None,
+            reader3.into_stream().await.unwrap(),
+        );
 
-        let res = join!(put_data_fut_1, put_data_fut_2);
+        let res = join!(put_data_fut_1, put_data_fut_2, put_data_fut_3);
         assert!(res.0.is_ok());
         assert!(res.1.is_ok());
+        assert!(res.2.is_ok());
         assert_eq!(res.0.unwrap(), 113629);
         assert_eq!(res.1.unwrap(), 113629);
+        assert_eq!(res.2.unwrap(), 113629);
     }
 
     #[tokio::test]
@@ -581,7 +585,8 @@ mod tests {
         let keys = vec!["userdata2.parquet".to_string()];
         let remote_location = bucket.clone() + &keys[0];
         let reader = MockS3Reader::new(bucket.clone(), keys.clone()).await;
-        let reader2 = MockS3Reader::new(bucket.clone(), keys).await;
+        let reader2 = MockS3Reader::new(bucket.clone(), keys.clone()).await;
+        let reader3 = MockS3Reader::new(bucket.clone(), keys).await;
 
         let put_data_fut_1 = cache.put_data_to_cache(
             remote_location.clone(),
@@ -593,11 +598,18 @@ mod tests {
             None,
             reader2.into_stream().await.unwrap(),
         );
+        let put_data_fut_3 = cache.put_data_to_cache(
+            remote_location.clone(),
+            None,
+            reader3.into_stream().await.unwrap(),
+        );
 
-        let res = join!(put_data_fut_1, put_data_fut_2);
+        let res = join!(put_data_fut_1, put_data_fut_2, put_data_fut_3);
         assert!(res.0.is_ok());
         assert!(res.1.is_ok());
+        assert!(res.2.is_ok());
         assert_eq!(res.0.unwrap(), 112193);
         assert_eq!(res.1.unwrap(), 112193);
+        assert_eq!(res.2.unwrap(), 112193);
     }
 }

@@ -77,7 +77,6 @@ impl DiskStore {
         bytes_vec: Option<Vec<Bytes>>,
         stream: Option<StorageReaderStream>,
     ) -> ParpulseResult<usize> {
-        println!("write_data: key={}", key);
         // NOTE(Yuanxin): Shall we spawn a task to write the data to disk?
         let bytes_written = self
             .disk_manager
