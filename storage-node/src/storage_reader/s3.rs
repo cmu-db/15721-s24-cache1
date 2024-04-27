@@ -40,6 +40,24 @@ impl S3Reader {
             keys,
         }
     }
+
+    pub async fn get_object_size(&self) -> ParpulseResult<usize> {
+        let mut size = 0;
+        for key in &self.keys {
+            let obj = self
+                .client
+                .head_object()
+                .bucket(&self.bucket)
+                .key(key)
+                .send()
+                .await?;
+            size += obj
+                .content_length
+                .map(|l| l as usize)
+                .ok_or_else(|| ParpulseError::S3("fail to get object size".into()))?;
+        }
+        Ok(size)
+    }
 }
 
 /// [`S3DataStream`] is a stream for reading data from S3. It reads the data in
@@ -192,5 +210,21 @@ mod tests {
             streaming_total_bytes += data.len();
         }
         assert_eq!(streaming_total_bytes, 565545);
+    }
+
+    #[tokio::test]
+    async fn test_s3_get_object_size() {
+        let bucket = "parpulse-test".to_string();
+        let keys = vec![
+            "userdata/userdata1.parquet".to_string(),
+            "userdata/userdata2.parquet".to_string(),
+            "userdata/userdata3.parquet".to_string(),
+            "userdata/userdata4.parquet".to_string(),
+            "userdata/userdata5.parquet".to_string(),
+        ];
+
+        let reader = S3Reader::new(bucket, keys).await;
+        let size = reader.get_object_size().await.unwrap();
+        assert_eq!(size, 565545);
     }
 }
