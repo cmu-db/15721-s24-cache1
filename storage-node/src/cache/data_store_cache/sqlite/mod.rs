@@ -63,20 +63,27 @@ pub struct SqliteStoreCache<R: DataStoreReplacer<SqliteStoreReplacerKey, SqliteS
 {
     replacer: RwLock<R>,
     sqlite_base_path: String,
+    buffer_size: usize,
 }
 
 impl<R: DataStoreReplacer<SqliteStoreReplacerKey, SqliteStoreReplacerValue>> SqliteStoreCache<R> {
-    pub fn new(replacer: R, sqlite_base_path: String) -> ParpulseResult<Self> {
+    pub fn new(
+        replacer: R,
+        sqlite_base_path: String,
+        buffer_size: Option<usize>,
+    ) -> ParpulseResult<Self> {
         let db = Connection::open(&sqlite_base_path)?;
         let create_table_stmt = format!(
             "CREATE TABLE IF NOT EXISTS {} ({} BLOB);",
             SQLITE_CACHE_TABLE_NAME, SQLITE_CACHE_COLUMN_NAME
         );
+        let buffer_size = buffer_size.unwrap_or(SQLITE_BLOB_READER_DEFAULT_BUFFER_SIZE);
         db.execute_batch(&create_table_stmt)?;
 
         Ok(Self {
             replacer: RwLock::new(replacer),
             sqlite_base_path,
+            buffer_size,
         })
     }
 }
@@ -104,14 +111,13 @@ impl<R: DataStoreReplacer<SqliteStoreReplacerKey, SqliteStoreReplacerValue>> Dat
             let (tx, rx) = channel(SQLITE_BLOB_CHANNEL_CAPACITY);
             let row_id = *replacer_value.as_value();
             let sqlite_base_path = self.sqlite_base_path.clone();
+            let buffer_size = self.buffer_size;
 
             tokio::spawn(async move {
                 let db =
                     Connection::open_with_flags(sqlite_base_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
                         .unwrap();
-                let mut blob_reader =
-                    SqliteBlobReader::new(&db, row_id, SQLITE_BLOB_READER_DEFAULT_BUFFER_SIZE)
-                        .unwrap();
+                let mut blob_reader = SqliteBlobReader::new(&db, row_id, buffer_size).unwrap();
                 while let Some(result) = blob_reader.next() {
                     match result {
                         Ok(bytes_read) => {
@@ -132,14 +138,16 @@ impl<R: DataStoreReplacer<SqliteStoreReplacerKey, SqliteStoreReplacerValue>> Dat
     async fn put_data_to_cache(
         &mut self,
         remote_location: String,
+        data_size: Option<usize>,
         mut data_stream: StorageReaderStream,
     ) -> ParpulseResult<usize> {
         let mut replacer = self.replacer.write().await;
         let sqlite_base_path = self.sqlite_base_path.clone();
         let db = Connection::open(sqlite_base_path)?;
+        let blob_size = data_size.unwrap_or(SQLITE_MAX_BLOB_SIZE);
         let insert_blob_stmt = format!(
             "INSERT INTO {} ({}) VALUES (ZEROBLOB({}))",
-            SQLITE_CACHE_TABLE_NAME, SQLITE_CACHE_COLUMN_NAME, SQLITE_MAX_BLOB_SIZE
+            SQLITE_CACHE_TABLE_NAME, SQLITE_CACHE_COLUMN_NAME, blob_size
         );
         db.execute(&insert_blob_stmt, [])?;
         let blob_key = db.last_insert_rowid();
@@ -175,35 +183,75 @@ mod tests {
 
     #[tokio::test]
     async fn test_sqlite_store_cache() {
-        // FIXME:
-        // Currently the unit test cannot pass. We need to have the exact size of the blob so that we
-        // won't read extra `\0` bytes.
         let tmp = tempfile::tempdir().unwrap();
         let sqlite_base_path = tmp.path().to_owned().join(Path::new("sqlite_test.db"));
         let replacer = LruReplacer::new(1024);
-        let mut cache =
-            SqliteStoreCache::new(replacer, sqlite_base_path.to_str().unwrap().to_string())
-                .expect("create sqlite store cache failed");
+        let buffer_size = 100;
+        let mut cache = SqliteStoreCache::new(
+            replacer,
+            sqlite_base_path.to_str().unwrap().to_string(),
+            Some(buffer_size),
+        )
+        .expect("create sqlite store cache failed");
 
-        let data = Bytes::from("hello world".as_bytes());
-        let remote_location = "tests-parquet/userdata1.parquet".to_string();
-        let data_stream = futures::stream::iter(vec![Ok(data.clone())]).boxed();
+        let data1 = Bytes::from_static(
+            b"What can I hold you with?
+I offer you lean streets, desperate sunsets, the
+moon of the jagged suburbs.
+I offer you the bitterness of a man who has looked
+long and long at the lonely moon.
+I offer you my ancestors, my dead men, the ghosts
+that living men have honoured in bronze.
+I offer you whatever insight my books may hold,
+whatever manliness or humour my life.
+I offer you the loyalty of a man who has never
+been loyal.",
+        );
+
+        let data2 = Bytes::from_static(
+            b"I offer you that kernel of myself that I have saved,
+somehow-the central heart that deals not
+in words, traffics not with dreams, and is
+untouched by time, by joy, by adversities.
+I offer you the memory of a yellow rose seen at
+sunset, years before you were born.
+I offer you explanations of yourself, theories about
+yourself, authentic and surprising news of
+yourself.
+I can give you my loneliness, my darkness, the
+hunger of my heart; I am trying to bribe you
+with uncertainty, with danger, with defeat.
+",
+        );
+        let data_size = data1.len() + data2.len();
+        let remote_location = "what-can-i-hold-you-with.txt".to_string();
+        let data_stream = futures::stream::iter(vec![Ok(data1.clone()), Ok(data2.clone())]).boxed();
         let bytes_written = cache
-            .put_data_to_cache(remote_location.clone(), data_stream)
+            .put_data_to_cache(remote_location.clone(), Some(data_size), data_stream)
             .await
             .expect("put data to cache failed");
-        assert_eq!(bytes_written, data.len());
+        assert_eq!(bytes_written, data1.len() + data2.len());
 
         let mut rx = cache
             .get_data_from_cache(remote_location.clone())
             .await
             .expect("get data from cache failed")
             .expect("data not found in cache");
-        let data = rx
-            .recv()
-            .await
-            .expect("read data from cache failed")
-            .unwrap();
-        assert_eq!(data, Bytes::from("hello world".as_bytes()));
+
+        let mut result = String::new();
+        let mut total_bytes_read = 0;
+        while let Some(bytes) = rx.recv().await {
+            let bytes = bytes.expect("read data from cache failed");
+            total_bytes_read += bytes.len();
+            result += &String::from_utf8(bytes.to_vec()).expect("convert bytes to string failed");
+        }
+        assert_eq!(total_bytes_read, data_size);
+
+        let data = format!(
+            "{}{}",
+            String::from_utf8(data1.to_vec()).unwrap(),
+            String::from_utf8(data2.to_vec()).unwrap()
+        );
+        assert_eq!(result, data);
     }
 }
