@@ -27,6 +27,7 @@ impl<C: DataStoreCache> StorageManager<C> {
     pub async fn get_data(
         &mut self,
         request: RequestParams,
+        is_mem_disk_cache: bool,
     ) -> ParpulseResult<Receiver<ParpulseResult<Bytes>>> {
         // 1. Try to get data from the cache first.
         // 2. If cache miss, then go to storage reader to fetch the data from
@@ -51,11 +52,19 @@ impl<C: DataStoreCache> StorageManager<C> {
         } else {
             let (stream, data_size) = if is_s3_request {
                 let reader = S3Reader::new(bucket.clone(), keys).await;
-                let data_size = reader.get_object_size().await?;
+                let data_size = if is_mem_disk_cache {
+                    None
+                } else {
+                    Some(reader.get_object_size().await?)
+                };
                 (reader.into_stream().await?, data_size)
             } else {
                 let reader = MockS3Reader::new(bucket.clone(), keys).await;
-                let data_size = reader.get_object_size().await?;
+                let data_size = if is_mem_disk_cache {
+                    None
+                } else {
+                    Some(reader.get_object_size().await?)
+                };
                 (reader.into_stream().await?, data_size)
             };
             self.data_store_cache
@@ -118,7 +127,7 @@ mod tests {
         let request = RequestParams::MockS3((bucket, keys));
 
         let mut start_time = Instant::now();
-        let result = storage_manager.get_data(request.clone()).await;
+        let result = storage_manager.get_data(request.clone(), true).await;
         assert!(result.is_ok());
         let mut data_rx = result.unwrap();
         let mut total_bytes = 0;
@@ -134,7 +143,7 @@ mod tests {
         let delta_time_miss = Instant::now() - start_time;
 
         start_time = Instant::now();
-        let result = storage_manager.get_data(request).await;
+        let result = storage_manager.get_data(request, true).await;
         assert!(result.is_ok());
         let data_rx = result.unwrap();
         assert_eq!(consume_receiver(data_rx).await, 113629);
@@ -174,7 +183,7 @@ mod tests {
         let request_small =
             RequestParams::MockS3((request_path_small_bucket, request_path_small_keys));
 
-        let result = storage_manager.get_data(request_small.clone()).await;
+        let result = storage_manager.get_data(request_small.clone(), true).await;
         assert!(result.is_ok());
         assert_eq!(consume_receiver(result.unwrap()).await, 930);
 
@@ -183,19 +192,19 @@ mod tests {
         let request_large =
             RequestParams::MockS3((request_path_large_bucket, request_path_large_keys));
 
-        let result = storage_manager.get_data(request_large.clone()).await;
+        let result = storage_manager.get_data(request_large.clone(), true).await;
         assert!(result.is_ok());
         assert_eq!(consume_receiver(result.unwrap()).await, 112193);
 
         // Get data again.
         let mut start_time = Instant::now();
-        let result = storage_manager.get_data(request_large).await;
+        let result = storage_manager.get_data(request_large, true).await;
         assert!(result.is_ok());
         assert_eq!(consume_receiver(result.unwrap()).await, 112193);
         let delta_time_hit_disk = Instant::now() - start_time;
 
         start_time = Instant::now();
-        let result = storage_manager.get_data(request_small).await;
+        let result = storage_manager.get_data(request_small, true).await;
         assert!(result.is_ok());
         assert_eq!(consume_receiver(result.unwrap()).await, 930);
         let delta_time_hit_mem = Instant::now() - start_time;
@@ -232,7 +241,7 @@ mod tests {
         let request_path_keys1 = vec!["userdata1.parquet".to_string()];
         let request_data1 = RequestParams::MockS3((request_path_bucket1, request_path_keys1));
 
-        let result = storage_manager.get_data(request_data1.clone()).await;
+        let result = storage_manager.get_data(request_data1.clone(), true).await;
         assert!(result.is_ok());
         assert_eq!(consume_receiver(result.unwrap()).await, 113629);
 
@@ -240,19 +249,19 @@ mod tests {
         let request_path_keys2 = vec!["userdata2.parquet".to_string()];
         let request_data2 = RequestParams::MockS3((request_path_bucket2, request_path_keys2));
 
-        let result = storage_manager.get_data(request_data2.clone()).await;
+        let result = storage_manager.get_data(request_data2.clone(), true).await;
         assert!(result.is_ok());
         assert_eq!(consume_receiver(result.unwrap()).await, 112193);
 
         // Get data again. Now data2 in memory and data1 in disk.
         let mut start_time = Instant::now();
-        let result = storage_manager.get_data(request_data1).await;
+        let result = storage_manager.get_data(request_data1, true).await;
         assert!(result.is_ok());
         assert_eq!(consume_receiver(result.unwrap()).await, 113629);
         let delta_time_hit_disk = Instant::now() - start_time;
 
         start_time = Instant::now();
-        let result = storage_manager.get_data(request_data2).await;
+        let result = storage_manager.get_data(request_data2, true).await;
         assert!(result.is_ok());
         assert_eq!(consume_receiver(result.unwrap()).await, 112193);
         let delta_time_hit_mem = Instant::now() - start_time;

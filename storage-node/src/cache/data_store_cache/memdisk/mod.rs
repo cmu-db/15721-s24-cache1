@@ -155,7 +155,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
     async fn put_data_to_cache(
         &mut self,
         remote_location: String,
-        _data_size: usize,
+        _data_size: Option<usize>,
         mut data_stream: StorageReaderStream,
     ) -> ParpulseResult<usize> {
         // TODO: Refine the lock.
@@ -296,26 +296,17 @@ mod tests {
         let keys = vec!["what-can-i-hold-you-with".to_string()];
         let data1_key = bucket.clone() + &keys[0];
         let reader = MockS3Reader::new(bucket.clone(), keys.clone()).await;
-        let data_size = reader.get_object_size().await.unwrap();
+        let data_stream = reader.into_stream().await.unwrap();
         let written_data_size = cache
-            .put_data_to_cache(
-                data1_key.clone(),
-                data_size,
-                reader.into_stream().await.unwrap(),
-            )
+            .put_data_to_cache(data1_key.clone(), None, data_stream)
             .await
             .unwrap();
         assert_eq!(written_data_size, 930);
 
         let data2_key = bucket.clone() + &keys[0] + "1";
         let reader = MockS3Reader::new(bucket.clone(), keys).await;
-        let data_size = reader.get_object_size().await.unwrap();
         let mut written_data_size = cache
-            .put_data_to_cache(
-                data2_key.clone(),
-                data_size,
-                reader.into_stream().await.unwrap(),
-            )
+            .put_data_to_cache(data2_key.clone(), None, reader.into_stream().await.unwrap())
             .await
             .unwrap();
         assert_eq!(written_data_size, 930);
@@ -351,11 +342,10 @@ mod tests {
         let keys = vec!["userdata1.parquet".to_string()];
         let remote_location = bucket.clone() + &keys[0];
         let reader = MockS3Reader::new(bucket.clone(), keys).await;
-        let data_size = reader.get_object_size().await.unwrap();
         let written_data_size = cache
             .put_data_to_cache(
                 remote_location.clone(),
-                data_size,
+                None,
                 reader.into_stream().await.unwrap(),
             )
             .await
@@ -365,11 +355,10 @@ mod tests {
         let keys = vec!["userdata2.parquet".to_string()];
         let remote_location2 = bucket.clone() + &keys[0];
         let reader = MockS3Reader::new(bucket, keys).await;
-        let data_size = reader.get_object_size().await.unwrap();
         let mut written_data_size = cache
             .put_data_to_cache(
                 remote_location2.clone(),
-                data_size,
+                None,
                 reader.into_stream().await.unwrap(),
             )
             .await
@@ -407,13 +396,8 @@ mod tests {
         let keys = vec!["what-can-i-hold-you-with".to_string()];
         let data1_key = bucket.clone() + &keys[0];
         let reader = MockS3Reader::new(bucket.clone(), keys.clone()).await;
-        let data_size = reader.get_object_size().await.unwrap();
         let written_data_size = cache
-            .put_data_to_cache(
-                data1_key.clone(),
-                data_size,
-                reader.into_stream().await.unwrap(),
-            )
+            .put_data_to_cache(data1_key.clone(), None, reader.into_stream().await.unwrap())
             .await
             .unwrap();
         assert_eq!(written_data_size, 930);
@@ -422,13 +406,8 @@ mod tests {
         let keys = vec!["userdata1.parquet".to_string()];
         let data2_key = bucket.clone() + &keys[0];
         let reader = MockS3Reader::new(bucket.clone(), keys).await;
-        let data_size = reader.get_object_size().await.unwrap();
         let mut written_data_size = cache
-            .put_data_to_cache(
-                data2_key.clone(),
-                data_size,
-                reader.into_stream().await.unwrap(),
-            )
+            .put_data_to_cache(data2_key.clone(), None, reader.into_stream().await.unwrap())
             .await
             .unwrap();
         assert_eq!(written_data_size, 113629);
