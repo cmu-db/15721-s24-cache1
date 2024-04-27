@@ -145,4 +145,31 @@ mod tests {
 
         server_handle.abort();
     }
+
+    #[tokio::test]
+    async fn test_file_not_exist() {
+        // Start the server
+        let server_handle = tokio::spawn(async move {
+            storage_node_serve("127.0.0.1", 3030).await.unwrap();
+        });
+
+        // Give the server some time to start
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+        let url =
+            "http://localhost:3030/file?bucket=tests-parquet&keys=not_exist.parquet&is_test=true";
+        let client = Client::new();
+        let response = client
+            .get(url)
+            .send()
+            .await
+            .expect("Failed to get response from the server.");
+
+        assert!(
+            response.status().is_server_error(),
+            "Expected 500 status code"
+        );
+
+        server_handle.abort();
+    }
 }
