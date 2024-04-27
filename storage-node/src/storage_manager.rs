@@ -120,7 +120,7 @@ mod tests {
 
         let data_store_cache =
             MemDiskStoreCache::new(cache, cache_base_path.display().to_string(), None, None);
-        let mut storage_manager = StorageManager::new(data_store_cache);
+        let storage_manager = StorageManager::new(data_store_cache);
 
         let bucket = "tests-parquet".to_string();
         let keys = vec!["userdata1.parquet".to_string()];
@@ -176,7 +176,7 @@ mod tests {
             Some(mem_cache),
             Some(950),
         );
-        let mut storage_manager = StorageManager::new(data_store_cache);
+        let storage_manager = StorageManager::new(data_store_cache);
 
         let request_path_small_bucket = "tests-text".to_string();
         let request_path_small_keys = vec!["what-can-i-hold-you-with".to_string()];
@@ -235,7 +235,7 @@ mod tests {
             Some(mem_cache),
             Some(120000),
         );
-        let mut storage_manager = StorageManager::new(data_store_cache);
+        let storage_manager = StorageManager::new(data_store_cache);
 
         let request_path_bucket1 = "tests-parquet".to_string();
         let request_path_keys1 = vec!["userdata1.parquet".to_string()];

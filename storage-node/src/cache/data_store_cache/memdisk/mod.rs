@@ -1,6 +1,5 @@
 pub mod data_store;
 
-use futures::{future::TryFutureExt, join};
 use std::{collections::HashMap, sync::Arc};
 
 use futures::stream::StreamExt;
@@ -30,6 +29,8 @@ pub const DEFAULT_MEM_CACHE_MAX_FILE_SIZE: usize = 1024 * 512;
 
 /// [`MemDiskStoreReplacerKey`] is a path to the remote object store.
 pub type MemDiskStoreReplacerKey = String;
+
+type StatusKeyHashMap = HashMap<String, ((Status, usize), Arc<Notify>)>;
 
 pub struct MemDiskStoreReplacerValue {
     /// The path to the data store. For mem store, it should be data's s3 path. For disk
@@ -78,7 +79,7 @@ pub struct MemDiskStoreCache<
     // MemDiskStoreReplacerKey -> remote_location
     // status: 0 -> incompleted; 1 -> completed; 2 -> failed
     // TODO(lanlou): we should clean this hashmap.
-    status_of_keys: RwLock<HashMap<String, ((Status, usize), Arc<Notify>)>>,
+    status_of_keys: RwLock<StatusKeyHashMap>,
 }
 
 /// This method creates a `MemDiskStoreCache` instance, and memory can be disabled by setting
@@ -179,9 +180,9 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             // If in_progress of remote_location thread fails, it will clean the data from this hash map.
 
             loop {
-                let mut status = Status::Incompleted;
-                let mut size: usize = 0;
-                let mut notify = Arc::new(Notify::new());
+                let status;
+                let size;
+                let notify;
                 if let Some(((status_ref, size_ref), notify_ref)) =
                     self.status_of_keys.read().await.get(&remote_location)
                 {
@@ -375,6 +376,7 @@ mod tests {
         cache::replacer::lru::LruReplacer,
         storage_reader::{s3_diskmock::MockS3Reader, AsyncStorageReader},
     };
+    use futures::join;
 
     use super::*;
     #[tokio::test]
@@ -388,7 +390,7 @@ mod tests {
         // the future? There is no chance for data1 to be put back to memory again currently.
         let tmp = tempfile::tempdir().unwrap();
         let disk_base_path = tmp.path().to_owned();
-        let mut cache = MemDiskStoreCache::new(
+        let cache = MemDiskStoreCache::new(
             LruReplacer::new(1024 * 512),
             disk_base_path.to_str().unwrap().to_string(),
             Some(LruReplacer::new(950)),
@@ -434,7 +436,7 @@ mod tests {
     async fn test_put_get_disk_only() {
         let tmp = tempfile::tempdir().unwrap();
         let disk_base_path = tmp.path().to_owned();
-        let mut cache = MemDiskStoreCache::new(
+        let cache = MemDiskStoreCache::new(
             LruReplacer::new(1024 * 512),
             disk_base_path.to_str().unwrap().to_string(),
             None,
@@ -488,7 +490,7 @@ mod tests {
         // 4. get the large file
         let tmp = tempfile::tempdir().unwrap();
         let disk_base_path = tmp.path().to_owned();
-        let mut cache = MemDiskStoreCache::new(
+        let cache = MemDiskStoreCache::new(
             LruReplacer::new(1024 * 512),
             disk_base_path.to_str().unwrap().to_string(),
             Some(LruReplacer::new(950)),
@@ -561,8 +563,8 @@ mod tests {
         let res = join!(put_data_fut_1, put_data_fut_2);
         assert!(res.0.is_ok());
         assert!(res.1.is_ok());
-        assert!(res.0.unwrap() == 113629);
-        assert!(res.1.unwrap() == 113629);
+        assert_eq!(res.0.unwrap(), 113629);
+        assert_eq!(res.1.unwrap(), 113629);
     }
 
     #[tokio::test]
@@ -595,7 +597,7 @@ mod tests {
         let res = join!(put_data_fut_1, put_data_fut_2);
         assert!(res.0.is_ok());
         assert!(res.1.is_ok());
-        assert!(res.0.unwrap() == 112193);
-        assert!(res.1.unwrap() == 112193);
+        assert_eq!(res.0.unwrap(), 112193);
+        assert_eq!(res.1.unwrap(), 112193);
     }
 }

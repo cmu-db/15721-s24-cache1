@@ -1,4 +1,3 @@
-use futures::lock::Mutex;
 use log::{info, warn};
 use std::sync::Arc;
 use storage_common::{RequestParams, S3Request};
