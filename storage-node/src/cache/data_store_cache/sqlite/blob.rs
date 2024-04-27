@@ -70,7 +70,7 @@ impl Iterator for SqliteBlobReader<'_> {
                     None
                 }
             }
-            Err(e) => Some(Err(e.into())),
+            Err(e) => Some(Err(e)),
         }
     }
 }

@@ -26,9 +26,6 @@ const SQLITE_CACHE_COLUMN_NAME: &str = "content";
 const SQLITE_BLOB_CHANNEL_CAPACITY: usize = 5;
 const SQLITE_BLOB_READER_DEFAULT_BUFFER_SIZE: usize = 1024;
 
-// TODO(Yuanxin):
-// Get the data size in advance from S3 so that we don't need to set a constant
-// value here. We can set the size of each blob to be the exact size of the S3 object.
 const SQLITE_MAX_BLOB_SIZE: usize = 512 * 1024 * 1024; // 512 MB
 
 pub type SqliteStoreReplacerKey = String;
