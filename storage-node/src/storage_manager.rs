@@ -275,7 +275,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_same_request_simultaneously_mem() {
+    async fn test_same_requests_simultaneously_mem() {
         let disk_cache = LruReplacer::new(1000000);
         let mem_cache = LruReplacer::new(120000);
 
@@ -307,7 +307,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_same_request_simultaneously_disk() {
+    async fn test_same_requests_simultaneously_disk() {
         let disk_cache = LruReplacer::new(1000000);
         let mem_cache = LruReplacer::new(10);
 

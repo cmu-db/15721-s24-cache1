@@ -530,7 +530,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_same_request_simultaneously_mem() {
+    async fn test_same_requests_simultaneously_mem() {
         let tmp = tempfile::tempdir().unwrap();
         let disk_base_path = tmp.path().to_owned();
         let cache = MemDiskStoreCache::new(
@@ -572,7 +572,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_same_request_simultaneously_disk() {
+    async fn test_same_requests_simultaneously_disk() {
         let tmp = tempfile::tempdir().unwrap();
         let disk_base_path = tmp.path().to_owned();
         let cache = MemDiskStoreCache::new(
