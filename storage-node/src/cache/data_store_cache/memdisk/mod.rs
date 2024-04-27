@@ -4,7 +4,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use futures::stream::StreamExt;
 use log::warn;
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::{Mutex, Notify, RwLock};
 
 use crate::{
     cache::{
@@ -74,8 +74,8 @@ pub struct MemDiskStoreCache<
     disk_store: DiskStore,
     mem_store: Option<RwLock<MemStore>>,
     /// Cache_key = S3_PATH; Cache_value = (CACHE_BASE_PATH + S3_PATH, size)
-    disk_replacer: RwLock<R>,
-    mem_replacer: Option<RwLock<R>>,
+    disk_replacer: Mutex<R>,
+    mem_replacer: Option<Mutex<R>>,
     // MemDiskStoreReplacerKey -> remote_location
     // status: 0 -> incompleted; 1 -> completed; 2 -> failed
     // TODO(lanlou): we should clean this hashmap.
@@ -113,15 +113,15 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>>
             MemDiskStoreCache {
                 disk_store,
                 mem_store: Some(RwLock::new(mem_store)),
-                disk_replacer: RwLock::new(disk_replacer),
-                mem_replacer: Some(RwLock::new(mem_replacer.unwrap())),
+                disk_replacer: Mutex::new(disk_replacer),
+                mem_replacer: Some(Mutex::new(mem_replacer.unwrap())),
                 status_of_keys: RwLock::new(HashMap::new()),
             }
         } else {
             MemDiskStoreCache {
                 disk_store,
                 mem_store: None,
-                disk_replacer: RwLock::new(disk_replacer),
+                disk_replacer: Mutex::new(disk_replacer),
                 mem_replacer: None,
                 status_of_keys: RwLock::new(HashMap::new()),
             }
@@ -139,7 +139,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
     ) -> ParpulseResult<Option<Receiver<ParpulseResult<Bytes>>>> {
         // TODO: Refine the lock.
         if let Some(mem_store) = &self.mem_store {
-            let mut mem_replacer = self.mem_replacer.as_ref().unwrap().write().await;
+            let mut mem_replacer = self.mem_replacer.as_ref().unwrap().lock().await;
             if let Some(replacer_value) = mem_replacer.get(&remote_location) {
                 let data_store_key = replacer_value.as_value();
                 match mem_store.read().await.read_data(data_store_key) {
@@ -154,7 +154,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             }
         }
 
-        let mut disk_replacer = self.disk_replacer.write().await;
+        let mut disk_replacer = self.disk_replacer.lock().await;
         match disk_replacer.get(&remote_location) {
             Some(replacer_value) => {
                 let data_store_key = replacer_value.as_value();
@@ -248,7 +248,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             if bytes_to_disk.is_none() {
                 // If bytes_to_disk has nothing, it means the data has been successfully written to memory.
                 // We have to put it into mem_replacer too.
-                let mut mem_replacer = self.mem_replacer.as_ref().unwrap().write().await;
+                let mut mem_replacer = self.mem_replacer.as_ref().unwrap().lock().await;
                 let replacer_put_status = mem_replacer.put(
                     remote_location.clone(),
                     MemDiskStoreReplacerValue::new(remote_location.clone(), bytes_mem_written),
@@ -290,7 +290,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                 self.disk_store
                     .write_data(disk_store_key.clone(), Some(bytes_vec), None)
                     .await?;
-                let mut disk_replacer = self.disk_replacer.write().await;
+                let mut disk_replacer = self.disk_replacer.lock().await;
                 if disk_replacer
                     .put(
                         remote_location_evicted,
@@ -336,7 +336,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             return Err(e);
         }
         let data_size = data_size_wrap.unwrap();
-        let mut disk_replacer = self.disk_replacer.write().await;
+        let mut disk_replacer = self.disk_replacer.lock().await;
         if disk_replacer
             .put(
                 remote_location.clone(),
