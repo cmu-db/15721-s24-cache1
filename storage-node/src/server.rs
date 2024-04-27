@@ -49,7 +49,11 @@ pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> 
                 } else {
                     RequestParams::S3((bucket, vec![keys]))
                 };
-                let result = storage_manager.lock().await.get_data(request).await;
+                let result = storage_manager
+                    .lock()
+                    .await
+                    .get_data(request, is_mem_disk_cache)
+                    .await;
                 match result {
                     Ok(data_rx) => {
                         let stream = ReceiverStream::new(data_rx);
