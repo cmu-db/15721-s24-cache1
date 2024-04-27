@@ -21,6 +21,7 @@ pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> 
     let cache = LruReplacer::new(dummy_size);
     // TODO: cache_base_path should be from config
     let data_store_cache = MemDiskStoreCache::new(cache, CACHE_BASE_PATH.to_string(), None, None);
+    let is_mem_disk_cache = true;
     // TODO: try to use more fine-grained lock instead of locking the whole storage_manager
     let storage_manager = Arc::new(Mutex::new(StorageManager::new(data_store_cache)));
 
