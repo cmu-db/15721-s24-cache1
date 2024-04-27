@@ -19,6 +19,7 @@ pub async fn storage_node_serve() -> ParpulseResult<()> {
     let cache = LruReplacer::new(dummy_size);
     // TODO: cache_base_path should be from config
     let data_store_cache = MemDiskStoreCache::new(cache, CACHE_BASE_PATH.to_string(), None, None);
+    let is_mem_disk_cache = true;
     // TODO: try to use more fine-grained lock instead of locking the whole storage_manager
     let storage_manager = Arc::new(Mutex::new(StorageManager::new(data_store_cache)));
 
@@ -46,7 +47,11 @@ pub async fn storage_node_serve() -> ParpulseResult<()> {
                 } else {
                     RequestParams::S3((bucket, vec![keys]))
                 };
-                let result = storage_manager.lock().await.get_data(request).await;
+                let result = storage_manager
+                    .lock()
+                    .await
+                    .get_data(request, is_mem_disk_cache)
+                    .await;
                 let data_rx = result.unwrap();
 
                 let stream = ReceiverStream::new(data_rx);
