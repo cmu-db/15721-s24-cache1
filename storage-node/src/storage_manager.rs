@@ -90,6 +90,7 @@ pub trait ParpulseReaderIterator: Iterator<Item = ParpulseResult<usize>> {
 
 #[cfg(test)]
 mod tests {
+    use futures::join;
     use std::time::Instant;
 
     use crate::cache::{data_store_cache::memdisk::MemDiskStoreCache, replacer::lru::LruReplacer};
@@ -271,5 +272,69 @@ mod tests {
             delta_time_hit_mem, delta_time_hit_disk
         );
         assert!(delta_time_hit_disk > delta_time_hit_mem);
+    }
+
+    #[tokio::test]
+    async fn test_same_request_simultaneously_mem() {
+        let disk_cache = LruReplacer::new(1000000);
+        let mem_cache = LruReplacer::new(120000);
+
+        let tmp = tempfile::tempdir().unwrap();
+        let disk_cache_base_path = tmp.path().to_owned();
+
+        let data_store_cache = MemDiskStoreCache::new(
+            disk_cache,
+            disk_cache_base_path.display().to_string(),
+            Some(mem_cache),
+            Some(120000),
+        );
+        let storage_manager = StorageManager::new(data_store_cache);
+
+        let request_path_bucket1 = "tests-parquet".to_string();
+        let request_path_keys1 = vec!["userdata1.parquet".to_string()];
+        let request_data1 = RequestParams::MockS3((request_path_bucket1, request_path_keys1));
+
+        let get_data_fut_1 = storage_manager.get_data(request_data1.clone(), true);
+        let get_data_fut_2 = storage_manager.get_data(request_data1.clone(), true);
+        let get_data_fut_3 = storage_manager.get_data(request_data1.clone(), true);
+        let result = join!(get_data_fut_1, get_data_fut_2, get_data_fut_3);
+        assert!(result.0.is_ok());
+        assert_eq!(consume_receiver(result.0.unwrap()).await, 113629);
+        assert!(result.1.is_ok());
+        assert_eq!(consume_receiver(result.1.unwrap()).await, 113629);
+        assert!(result.2.is_ok());
+        assert_eq!(consume_receiver(result.2.unwrap()).await, 113629);
+    }
+
+    #[tokio::test]
+    async fn test_same_request_simultaneously_disk() {
+        let disk_cache = LruReplacer::new(1000000);
+        let mem_cache = LruReplacer::new(10);
+
+        let tmp = tempfile::tempdir().unwrap();
+        let disk_cache_base_path = tmp.path().to_owned();
+
+        let data_store_cache = MemDiskStoreCache::new(
+            disk_cache,
+            disk_cache_base_path.display().to_string(),
+            Some(mem_cache),
+            Some(120000),
+        );
+        let storage_manager = StorageManager::new(data_store_cache);
+
+        let request_path_bucket1 = "tests-parquet".to_string();
+        let request_path_keys1 = vec!["userdata2.parquet".to_string()];
+        let request_data1 = RequestParams::MockS3((request_path_bucket1, request_path_keys1));
+
+        let get_data_fut_1 = storage_manager.get_data(request_data1.clone(), true);
+        let get_data_fut_2 = storage_manager.get_data(request_data1.clone(), true);
+        let get_data_fut_3 = storage_manager.get_data(request_data1.clone(), true);
+        let result = join!(get_data_fut_1, get_data_fut_2, get_data_fut_3);
+        assert!(result.0.is_ok());
+        assert_eq!(consume_receiver(result.0.unwrap()).await, 112193);
+        assert!(result.1.is_ok());
+        assert_eq!(consume_receiver(result.1.unwrap()).await, 112193);
+        assert!(result.2.is_ok());
+        assert_eq!(consume_receiver(result.2.unwrap()).await, 112193);
     }
 }
