@@ -89,8 +89,6 @@ impl<R: DataStoreReplacer<SqliteStoreReplacerKey, SqliteStoreReplacerValue>> Dro
     for SqliteStoreCache<R>
 {
     fn drop(&mut self) {
-        // FIXME(Yuanxin): close sqlite connection before removing the db files?
-        // self.db.close().expect("close sqlite connection failed");
         fs::remove_file(self.sqlite_base_path.clone()).expect("remove sqlite db files failed");
     }
 }
