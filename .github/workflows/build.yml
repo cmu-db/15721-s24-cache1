@@ -25,12 +25,12 @@ jobs:
         rustup default stable
         rustup component add rustfmt
         rustup component add clippy
+    - name: Install cargo-llvm-cov
+      uses: taiki-e/install-action@cargo-llvm-cov
     - name: Install Sqlite
       run: |
         apt update
         apt install libsqlite3-dev
-    - name: Install cargo-llvm-cov
-      uses: taiki-e/install-action@cargo-llvm-cov
     - name: Format check
       run: cargo fmt --all -- --check
     - name: Run Clippy
