@@ -28,7 +28,7 @@ jobs:
     - name: Install Sqlite
       run: |
         apt update
-        apt install sqlite3
+        apt install libsqlite3-dev
     - name: Install cargo-llvm-cov
       uses: taiki-e/install-action@cargo-llvm-cov
     - name: Format check
