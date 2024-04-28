@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-arrow-array = "51.0.0"
 anyhow = "1"
 hyper = "1"
 async-trait = "0.1"
@@ -13,7 +12,8 @@ storage-common = { path = "../storage-common" }
 futures = "0.3"
 reqwest = { version = "0.12", features = ["stream"] }
 tempfile = "3.2"
-parquet = { version = "51.0.0", features = ["async"] }
-arrow = "51.0.0"
+parquet = { version = "50.0.0", features = ["async"] }
+arrow = "50.0.0"
 mockito = "1.4.0"
 log = "0.4"
+istziio-client = "0.1"

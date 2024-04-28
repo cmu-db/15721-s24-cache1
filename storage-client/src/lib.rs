@@ -1,7 +1,7 @@
 pub mod client;
 
 use anyhow::Result;
-use arrow_array::RecordBatch;
+use arrow::record_batch::RecordBatch;
 use tokio::sync::mpsc::Receiver;
 
 /// Id types for table, column, and record. Need to be consistent among all components

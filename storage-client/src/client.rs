@@ -1,18 +1,20 @@
 use anyhow::{anyhow, Ok, Result};
-use arrow_array::RecordBatch;
+use arrow::array::RecordBatch;
 use futures::stream::StreamExt;
-use futures::TryStreamExt;
+
 use hyper::Uri;
-use parquet::arrow::{ParquetRecordBatchStreamBuilder, ProjectionMask};
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use parquet::arrow::ProjectionMask;
+// use parquet::arrow::{ParquetRecordBatchStreamBuilder, ProjectionMask};
 use reqwest::{Client, Response, Url};
 use std::fs::File;
 use std::io::Write;
 use storage_common::RequestParams;
 use tempfile::tempdir;
-use tokio::fs::File as AsyncFile;
+
 use tokio::sync::mpsc::{channel, Receiver};
 
-use crate::{StorageClient, StorageRequest};
+use istziio_client::client_api::{StorageClient, StorageRequest};
 
 /// The batch size for the record batch.
 const BATCH_SIZE: usize = 3;
@@ -72,21 +74,18 @@ impl StorageClientImpl {
             }
 
             // Convert the Parquet file to a record batch.
-            let file = AsyncFile::open(file_path).await.unwrap();
-            let builder = ParquetRecordBatchStreamBuilder::new(file)
-                .await
-                .unwrap()
-                .with_batch_size(BATCH_SIZE);
-
+            let file = File::open(file_path)?;
+            let builder =
+                ParquetRecordBatchReaderBuilder::try_new(file)?.with_batch_size(BATCH_SIZE);
             let mask = ProjectionMask::all();
-            let stream = builder.with_projection(mask).build().unwrap();
-            let results = stream.try_collect::<Vec<_>>().await.unwrap();
+            let mut reader = builder.with_projection(mask).build()?;
+
+            let (tx, rx) = channel(CHANNEL_CAPACITY);
 
             // Return the record batch as a stream.
-            let (tx, rx) = channel(CHANNEL_CAPACITY);
             tokio::spawn(async move {
-                for result in results {
-                    tx.send(result).await.unwrap();
+                while let Some(core::result::Result::Ok(rb)) = reader.next() {
+                    tx.send(rb).await.unwrap();
                 }
             });
             Ok(rx)
