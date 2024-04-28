@@ -30,8 +30,9 @@ pub const DEFAULT_MEM_CACHE_MAX_FILE_SIZE: usize = 1024 * 512;
 /// [`MemDiskStoreReplacerKey`] is a path to the remote object store.
 pub type MemDiskStoreReplacerKey = String;
 
-// Status -> completed/incompleted; usize -> file_size
-// Notify -> notify; usize -> notify_waiter_count
+/// Status -> completed/incompleted; usize -> file_size
+/// Notify -> notify; usize -> notify_waiter_count
+/// FIXME: make (Notify, Mutex<usize>) a struct to make it more readable.
 type StatusKeyHashMap = HashMap<String, ((Status, usize), Arc<(Notify, Mutex<usize>)>)>;
 
 pub struct MemDiskStoreReplacerValue {
@@ -159,7 +160,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                     }
                     Ok(None) => {
                         return Err(ParpulseError::Internal(
-                            "Memory replacer and memory store keys are inconsistent.".to_string(),
+                            "Memory replacer and memory store is inconsistent.".to_string(),
                         ))
                     }
                     Err(e) => return Err(e),
@@ -184,7 +185,9 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
         {
             Ok(Some(data))
         } else {
-            unreachable!();
+            return Err(ParpulseError::Internal(
+                "Disk replacer and disk store is inconsistent.".to_string(),
+            ));
         }
     }
 
@@ -249,6 +252,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                     Some(Ok(bytes)) => {
                         bytes_mem_written += bytes.len();
                         // TODO: Need to write the data to network.
+                        // TODO(lanlou): we need benchmark future, to put this lock outside the loop.
                         if let Some((bytes_vec, _)) = mem_store
                             .write()
                             .await
