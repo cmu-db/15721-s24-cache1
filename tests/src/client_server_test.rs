@@ -6,8 +6,8 @@ extern crate storage_node;
 
 #[cfg(test)]
 mod tests {
-    use istziio_client::client_api::{StorageClient, StorageRequest};
     use arrow::array::{Float64Array, StringArray};
+    use istziio_client::client_api::{StorageClient, StorageRequest};
     use serial_test::serial;
     use std::time::Instant;
     use storage_client::client::StorageClientImpl;
