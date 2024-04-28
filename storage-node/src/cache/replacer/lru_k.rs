@@ -134,9 +134,8 @@ impl<K: ReplacerKey, V: ReplacerValue> LruKReplacer<K, V> {
         let mut evicted_keys = Vec::new();
         while (self.size + updated_size) > self.max_capacity {
             let key_to_evict = self.evict(&key);
-            if key_to_evict.is_none() {
-                return None;
-            }
+            // If key_to_evict is none, return none
+            key_to_evict.as_ref()?;
             if let Some(evicted_key) = key_to_evict {
                 evicted_keys.push(evicted_key);
             }

@@ -120,6 +120,7 @@ impl DiskManager {
         if let Some(mut stream) = stream {
             let bytes_cur = stream.next().await;
             if bytes_cur.is_none() {
+                file.flush().await?;
                 return Ok(bytes_written);
             }
             let mut bytes_cur = bytes_cur.unwrap()?;

@@ -59,10 +59,6 @@ impl<K: ReplacerKey, V: ReplacerValue> LruReplacer<K, V> {
         while (self.size + value.size()) > self.max_capacity {
             // Previous code guarantees that there is at least 1 element in the cache_map, so we
             // can safely unwrap here.
-            println!(
-                "-------- To Evicting Key: {:?} --------",
-                self.cache_map.front().unwrap().1 .1
-            );
             if self.cache_map.front().unwrap().1 .1 > 0 {
                 // TODO(lanlou): Actually we should look next to evict, but for simplicity, just
                 // return None here, it is temporarily okay since we will not pin an element for

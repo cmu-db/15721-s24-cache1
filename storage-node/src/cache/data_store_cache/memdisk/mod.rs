@@ -146,6 +146,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                 let data_store_key = replacer_value.as_value();
                 match mem_store.read().await.read_data(data_store_key) {
                     Ok(Some(rx)) => {
+                        // TODO(lanlou): actually we should unpin after all the data are consumed...
                         if !mem_replacer.unpin(&remote_location) {
                             warn!(
                                 "Failed to unpin the key ({}) in memory replacer.",
@@ -388,8 +389,11 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
         let ((status, size), notify) = status_of_keys.get_mut(&remote_location).unwrap();
         *status = Status::Completed;
         *size = data_size;
-        for _ in 0..*notify.1.lock().await {
-            self.disk_replacer.lock().await.pin(&remote_location);
+        {
+            let mut disk_replacer = self.disk_replacer.lock().await;
+            for _ in 0..*notify.1.lock().await {
+                disk_replacer.pin(&remote_location);
+            }
         }
         notify.0.notify_waiters();
         Ok(data_size)
