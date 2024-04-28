@@ -8,7 +8,7 @@ use futures::StreamExt;
 use rusqlite::{Connection, DatabaseName, OpenFlags};
 use tokio::sync::{
     mpsc::{channel, Receiver},
-    RwLock,
+    Mutex,
 };
 
 use crate::{
@@ -58,7 +58,7 @@ impl ReplacerValue for SqliteStoreReplacerValue {
 
 pub struct SqliteStoreCache<R: DataStoreReplacer<SqliteStoreReplacerKey, SqliteStoreReplacerValue>>
 {
-    replacer: RwLock<R>,
+    replacer: Mutex<R>,
     sqlite_base_path: String,
     buffer_size: usize,
 }
@@ -78,7 +78,7 @@ impl<R: DataStoreReplacer<SqliteStoreReplacerKey, SqliteStoreReplacerValue>> Sql
         db.execute_batch(&create_table_stmt)?;
 
         Ok(Self {
-            replacer: RwLock::new(replacer),
+            replacer: Mutex::new(replacer),
             sqlite_base_path,
             buffer_size,
         })
@@ -101,7 +101,7 @@ impl<R: DataStoreReplacer<SqliteStoreReplacerKey, SqliteStoreReplacerValue>> Dat
         &mut self,
         remote_location: String,
     ) -> ParpulseResult<Option<Receiver<ParpulseResult<Bytes>>>> {
-        let mut replacer = self.replacer.write().await;
+        let mut replacer = self.replacer.lock().await;
         if let Some(replacer_value) = replacer.get(&remote_location) {
             let (tx, rx) = channel(SQLITE_BLOB_CHANNEL_CAPACITY);
             let row_id = *replacer_value.as_value();
@@ -136,7 +136,7 @@ impl<R: DataStoreReplacer<SqliteStoreReplacerKey, SqliteStoreReplacerValue>> Dat
         data_size: Option<usize>,
         mut data_stream: StorageReaderStream,
     ) -> ParpulseResult<usize> {
-        let mut replacer = self.replacer.write().await;
+        let mut replacer = self.replacer.lock().await;
         let sqlite_base_path = self.sqlite_base_path.clone();
         let db = Connection::open(sqlite_base_path)?;
         let blob_size = data_size.unwrap_or(SQLITE_MAX_BLOB_SIZE);
