@@ -3,7 +3,7 @@ This file is used to decode a parquet file and display the first n rows of the
 file, mainly for visualization purposes.
 
 Usage:
-    python decode_parquet.py <path-to-parquet-file> --n
+    python scripts/decode_parquet.py <path-to-parquet-file> --n
     <number-of-rows-to-display>
 """
 
