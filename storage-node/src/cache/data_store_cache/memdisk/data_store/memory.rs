@@ -10,7 +10,7 @@ const DEFAULT_MEM_CHANNEL_BUFFER_SIZE: usize = 1024;
 pub struct MemStore {
     /// data: remote_location -> (data, size)
     data: HashMap<String, (Vec<Bytes>, usize)>,
-    max_file_size: usize,
+    pub max_file_size: usize,
 }
 
 impl MemStore {

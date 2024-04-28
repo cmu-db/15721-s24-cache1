@@ -80,6 +80,7 @@ pub struct MemDiskStoreCache<
     // status: 0 -> incompleted; 1 -> completed; 2 -> failed
     // TODO(lanlou): we should clean this hashmap.
     status_of_keys: RwLock<StatusKeyHashMap>,
+    mem_store_max_size: Option<usize>,
 }
 
 /// This method creates a `MemDiskStoreCache` instance, and memory can be disabled by setting
@@ -110,12 +111,14 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>>
             }
 
             let mem_store = MemStore::new(mem_max_file_size);
+            let mem_store_max_size = mem_store.max_file_size;
             MemDiskStoreCache {
                 disk_store,
                 mem_store: Some(RwLock::new(mem_store)),
                 disk_replacer: Mutex::new(disk_replacer),
                 mem_replacer: Some(Mutex::new(mem_replacer.unwrap())),
                 status_of_keys: RwLock::new(HashMap::new()),
+                mem_store_max_size: Some(mem_store_max_size),
             }
         } else {
             MemDiskStoreCache {
@@ -124,6 +127,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>>
                 disk_replacer: Mutex::new(disk_replacer),
                 mem_replacer: None,
                 status_of_keys: RwLock::new(HashMap::new()),
+                mem_store_max_size: None,
             }
         }
     }
@@ -171,7 +175,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
     async fn put_data_to_cache(
         &self,
         remote_location: String,
-        _data_size: Option<usize>,
+        data_size: Option<usize>,
         mut data_stream: StorageReaderStream,
     ) -> ParpulseResult<usize> {
         {
@@ -210,159 +214,306 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             );
         }
 
-        // TODO: Refine the lock.
-        // TODO(lanlou): Also write the data to network.
-        let mut bytes_to_disk = None;
-        let mut bytes_mem_written = 0;
-        let mut evicted_bytes_to_disk: Option<Vec<(MemDiskStoreReplacerKey, (Vec<Bytes>, usize))>> =
-            None;
-        // 1. If the mem_store is enabled, first try to write the data to memory.
-        // Note: Only file which size < mem_max_file_size can be written to memory.
-        if let Some(mem_store) = &self.mem_store {
-            loop {
-                match data_stream.next().await {
-                    Some(Ok(bytes)) => {
-                        bytes_mem_written += bytes.len();
-                        // TODO: Need to write the data to network.
-                        if let Some((bytes_vec, _)) = mem_store
-                            .write()
-                            .await
-                            .write_data(remote_location.clone(), bytes)
-                        {
-                            // If write_data returns something, it means the file size is too large
-                            // to fit in the memory. We should put it to disk cache.
-                            bytes_to_disk = Some(bytes_vec);
-                            break;
+        if data_size.is_none() {
+            // TODO: Refine the lock.
+            // TODO(lanlou): Also write the data to network.
+            let mut bytes_to_disk = None;
+            let mut bytes_mem_written = 0;
+            let mut evicted_bytes_to_disk: Option<
+                Vec<(MemDiskStoreReplacerKey, (Vec<Bytes>, usize))>,
+            > = None;
+            // 1. If the mem_store is enabled, first try to write the data to memory.
+            // Note: Only file which size < mem_max_file_size can be written to memory.
+            if let Some(mem_store) = &self.mem_store {
+                loop {
+                    match data_stream.next().await {
+                        Some(Ok(bytes)) => {
+                            bytes_mem_written += bytes.len();
+                            // TODO: Need to write the data to network.
+                            if let Some((bytes_vec, _)) = mem_store
+                                .write()
+                                .await
+                                .write_data(remote_location.clone(), bytes)
+                            {
+                                // If write_data returns something, it means the file size is too large
+                                // to fit in the memory. We should put it to disk cache.
+                                bytes_to_disk = Some(bytes_vec);
+                                break;
+                            }
                         }
+                        Some(Err(e)) => {
+                            // TODO(lanlou): Every time it returns an error, I need to manually add this clean code...
+                            // How to improve?
+                            self.status_of_keys.write().await.remove(&remote_location);
+                            return Err(e);
+                        }
+                        None => break,
                     }
-                    Some(Err(e)) => {
-                        // TODO(lanlou): Every time it returns an error, I need to manually add this clean code...
-                        // How to improve?
-                        self.status_of_keys.write().await.remove(&remote_location);
-                        return Err(e);
-                    }
-                    None => break,
                 }
-            }
 
-            if bytes_to_disk.is_none() {
-                // If bytes_to_disk has nothing, it means the data has been successfully written to memory.
-                // We have to put it into mem_replacer too.
-                let mut mem_replacer = self.mem_replacer.as_ref().unwrap().lock().await;
-                let replacer_put_status = mem_replacer.put(
-                    remote_location.clone(),
-                    MemDiskStoreReplacerValue::new(remote_location.clone(), bytes_mem_written),
-                );
-                // Insertion fails.
-                if replacer_put_status.is_none() {
-                    // Put the data to disk cache.
-                    bytes_to_disk = Some(
-                        mem_store
-                            .write()
-                            .await
-                            .clean_data(&remote_location)
-                            .unwrap()
-                            .0,
+                if bytes_to_disk.is_none() {
+                    // If bytes_to_disk has nothing, it means the data has been successfully written to memory.
+                    // We have to put it into mem_replacer too.
+                    let mut mem_replacer = self.mem_replacer.as_ref().unwrap().lock().await;
+                    let replacer_put_status = mem_replacer.put(
+                        remote_location.clone(),
+                        MemDiskStoreReplacerValue::new(remote_location.clone(), bytes_mem_written),
                     );
-                } else {
-                    // If successfully putting it into mem_replacer, we should record the evicted data,
-                    // delete them from mem_store, and put all of them to disk cache.
-                    if let Some(evicted_keys) = replacer_put_status {
-                        let mut evicted_bytes_to_disk_inner = Vec::new();
-                        for evicted_key in evicted_keys {
-                            evicted_bytes_to_disk_inner.push((
-                                evicted_key.clone(),
-                                mem_store.write().await.clean_data(&evicted_key).unwrap(),
-                            ));
+                    // Insertion fails.
+                    if replacer_put_status.is_none() {
+                        // Put the data to disk cache.
+                        bytes_to_disk = Some(
+                            mem_store
+                                .write()
+                                .await
+                                .clean_data(&remote_location)
+                                .unwrap()
+                                .0,
+                        );
+                    } else {
+                        // If successfully putting it into mem_replacer, we should record the evicted data,
+                        // delete them from mem_store, and put all of them to disk cache.
+                        if let Some(evicted_keys) = replacer_put_status {
+                            let mut evicted_bytes_to_disk_inner = Vec::new();
+                            for evicted_key in evicted_keys {
+                                evicted_bytes_to_disk_inner.push((
+                                    evicted_key.clone(),
+                                    mem_store.write().await.clean_data(&evicted_key).unwrap(),
+                                ));
+                            }
+                            evicted_bytes_to_disk = Some(evicted_bytes_to_disk_inner);
                         }
-                        evicted_bytes_to_disk = Some(evicted_bytes_to_disk_inner);
                     }
                 }
             }
-        }
 
-        // 2. If applicable, put all the evicted data into disk cache.
-        // Don't need to write the data to network for evicted keys.
-        if let Some(evicted_bytes_to_disk) = evicted_bytes_to_disk {
-            for (remote_location_evicted, (bytes_vec, data_size)) in evicted_bytes_to_disk {
-                assert_ne!(remote_location_evicted, remote_location);
-                let disk_store_key = self.disk_store.data_store_key(&remote_location_evicted);
-                self.disk_store
-                    .write_data(disk_store_key.clone(), Some(bytes_vec), None)
-                    .await?;
-                let mut disk_replacer = self.disk_replacer.lock().await;
-                if disk_replacer
-                    .put(
-                        remote_location_evicted,
-                        MemDiskStoreReplacerValue::new(disk_store_key.clone(), data_size),
-                    )
-                    .is_none()
-                {
-                    if let Err(e) = self.disk_store.clean_data(&disk_store_key).await {
+            // 2. If applicable, put all the evicted data into disk cache.
+            // Don't need to write the data to network for evicted keys.
+            if let Some(evicted_bytes_to_disk) = evicted_bytes_to_disk {
+                for (remote_location_evicted, (bytes_vec, data_size)) in evicted_bytes_to_disk {
+                    assert_ne!(remote_location_evicted, remote_location);
+                    let disk_store_key = self.disk_store.data_store_key(&remote_location_evicted);
+                    self.disk_store
+                        .write_data(disk_store_key.clone(), Some(bytes_vec), None)
+                        .await?;
+                    let mut disk_replacer = self.disk_replacer.lock().await;
+                    if disk_replacer
+                        .put(
+                            remote_location_evicted,
+                            MemDiskStoreReplacerValue::new(disk_store_key.clone(), data_size),
+                        )
+                        .is_none()
+                    {
+                        if let Err(e) = self.disk_store.clean_data(&disk_store_key).await {
+                            warn!(
+                                "Failed to clean data ({}) from disk store: {}",
+                                disk_store_key, e
+                            );
+                        }
                         warn!(
-                            "Failed to clean data ({}) from disk store: {}",
-                            disk_store_key, e
+                            "Failed to put evicted data ({}) to disk replacer.",
+                            disk_store_key
                         );
                     }
-                    warn!(
-                        "Failed to put evicted data ({}) to disk replacer.",
-                        disk_store_key
-                    );
                 }
             }
-        }
 
-        // 3. If the data is successfully written to memory, directly return.
-        if self.mem_store.is_some() && bytes_to_disk.is_none() {
+            // 3. If the data is successfully written to memory, directly return.
+            if self.mem_store.is_some() && bytes_to_disk.is_none() {
+                let mut status_of_keys = self.status_of_keys.write().await;
+                let ((status, size), notify) = status_of_keys.get_mut(&remote_location).unwrap();
+                *status = Status::Completed;
+                *size = bytes_mem_written;
+                notify.notify_waiters();
+                return Ok(bytes_mem_written);
+            }
+
+            // 4. If the data is not written to memory_cache successfully, then cache it to disk.
+            // Need to write the data to network for the current key.
+            let disk_store_key = self.disk_store.data_store_key(&remote_location);
+            // TODO: Write the data store cache first w/ `incompleted` state and update the state
+            // after finishing writing into the data store.
+            let data_size_wrap = self
+                .disk_store
+                .write_data(disk_store_key.clone(), bytes_to_disk, Some(data_stream))
+                .await;
+            if let Err(e) = data_size_wrap {
+                self.status_of_keys.write().await.remove(&remote_location);
+                return Err(e);
+            }
+            let data_size = data_size_wrap.unwrap();
+            let mut disk_replacer = self.disk_replacer.lock().await;
+            if disk_replacer
+                .put(
+                    remote_location.clone(),
+                    MemDiskStoreReplacerValue::new(disk_store_key.clone(), data_size),
+                )
+                .is_none()
+            {
+                if let Err(e) = self.disk_store.clean_data(&disk_store_key).await {
+                    // TODO: do we need to notify the caller this failure?
+                    warn!(
+                        "Failed to clean data ({}) from disk store: {}",
+                        disk_store_key, e
+                    );
+                }
+                self.status_of_keys.write().await.remove(&remote_location);
+                return Err(ParpulseError::Internal(
+                    "Failed to put data to disk replacer.".to_string(),
+                ));
+            }
+
             let mut status_of_keys = self.status_of_keys.write().await;
             let ((status, size), notify) = status_of_keys.get_mut(&remote_location).unwrap();
             *status = Status::Completed;
             *size = bytes_mem_written;
             notify.notify_waiters();
-            return Ok(bytes_mem_written);
-        }
-
-        // 4. If the data is not written to memory_cache successfully, then cache it to disk.
-        // Need to write the data to network for the current key.
-        let disk_store_key = self.disk_store.data_store_key(&remote_location);
-        // TODO: Write the data store cache first w/ `incompleted` state and update the state
-        // after finishing writing into the data store.
-        let data_size_wrap = self
-            .disk_store
-            .write_data(disk_store_key.clone(), bytes_to_disk, Some(data_stream))
-            .await;
-        if let Err(e) = data_size_wrap {
-            self.status_of_keys.write().await.remove(&remote_location);
-            return Err(e);
-        }
-        let data_size = data_size_wrap.unwrap();
-        let mut disk_replacer = self.disk_replacer.lock().await;
-        if disk_replacer
-            .put(
-                remote_location.clone(),
-                MemDiskStoreReplacerValue::new(disk_store_key.clone(), data_size),
-            )
-            .is_none()
-        {
-            if let Err(e) = self.disk_store.clean_data(&disk_store_key).await {
-                // TODO: do we need to notify the caller this failure?
-                warn!(
-                    "Failed to clean data ({}) from disk store: {}",
-                    disk_store_key, e
-                );
+            Ok(data_size)
+        } else {
+            let mut bytes_to_disk = None;
+            let mut evicted_bytes_to_disk: Option<
+                Vec<(MemDiskStoreReplacerKey, (Vec<Bytes>, usize))>,
+            > = None;
+            let data_size = data_size.unwrap();
+            if let Some(mem_store) = &self.mem_store {
+                if data_size < self.mem_store_max_size.unwrap() {
+                    let mut bytes_mem_written = 0;
+                    loop {
+                        match data_stream.next().await {
+                            Some(Ok(bytes)) => {
+                                bytes_mem_written += bytes.len();
+                                // TODO: Need to write the data to network.
+                                if let Some(_) = mem_store
+                                    .write()
+                                    .await
+                                    .write_data(remote_location.clone(), bytes)
+                                {
+                                    unreachable!();
+                                }
+                            }
+                            Some(Err(e)) => {
+                                self.status_of_keys.write().await.remove(&remote_location);
+                                return Err(e);
+                            }
+                            None => break,
+                        }
+                    }
+                    // If bytes_to_disk has nothing, it means the data has been successfully written to memory.
+                    // We have to put it into mem_replacer too.
+                    let mut mem_replacer = self.mem_replacer.as_ref().unwrap().lock().await;
+                    let replacer_put_status = mem_replacer.put(
+                        remote_location.clone(),
+                        MemDiskStoreReplacerValue::new(remote_location.clone(), bytes_mem_written),
+                    );
+                    // Insertion fails.
+                    if replacer_put_status.is_none() {
+                        // Put the data to disk cache.
+                        bytes_to_disk = Some(
+                            mem_store
+                                .write()
+                                .await
+                                .clean_data(&remote_location)
+                                .unwrap()
+                                .0,
+                        );
+                    } else {
+                        // If successfully putting it into mem_replacer, we should record the evicted data,
+                        // delete them from mem_store, and put all of them to disk cache.
+                        if let Some(evicted_keys) = replacer_put_status {
+                            let mut evicted_bytes_to_disk_inner = Vec::new();
+                            for evicted_key in evicted_keys {
+                                evicted_bytes_to_disk_inner.push((
+                                    evicted_key.clone(),
+                                    mem_store.write().await.clean_data(&evicted_key).unwrap(),
+                                ));
+                            }
+                            evicted_bytes_to_disk = Some(evicted_bytes_to_disk_inner);
+                        }
+                    }
+                    if let Some(evicted_bytes_to_disk) = evicted_bytes_to_disk {
+                        for (remote_location_evicted, (bytes_vec, data_size)) in
+                            evicted_bytes_to_disk
+                        {
+                            assert_ne!(remote_location_evicted, remote_location);
+                            let disk_store_key =
+                                self.disk_store.data_store_key(&remote_location_evicted);
+                            self.disk_store
+                                .write_data(disk_store_key.clone(), Some(bytes_vec), None)
+                                .await?;
+                            let mut disk_replacer = self.disk_replacer.lock().await;
+                            if disk_replacer
+                                .put(
+                                    remote_location_evicted,
+                                    MemDiskStoreReplacerValue::new(
+                                        disk_store_key.clone(),
+                                        data_size,
+                                    ),
+                                )
+                                .is_none()
+                            {
+                                if let Err(e) = self.disk_store.clean_data(&disk_store_key).await {
+                                    warn!(
+                                        "Failed to clean data ({}) from disk store: {}",
+                                        disk_store_key, e
+                                    );
+                                }
+                                warn!(
+                                    "Failed to put evicted data ({}) to disk replacer.",
+                                    disk_store_key
+                                );
+                            }
+                        }
+                    }
+                    let mut status_of_keys = self.status_of_keys.write().await;
+                    let ((status, size), notify) =
+                        status_of_keys.get_mut(&remote_location).unwrap();
+                    *status = Status::Completed;
+                    *size = bytes_mem_written;
+                    notify.notify_waiters();
+                    return Ok(bytes_mem_written);
+                }
             }
-            self.status_of_keys.write().await.remove(&remote_location);
-            return Err(ParpulseError::Internal(
-                "Failed to put data to disk replacer.".to_string(),
-            ));
-        }
 
-        let mut status_of_keys = self.status_of_keys.write().await;
-        let ((status, size), notify) = status_of_keys.get_mut(&remote_location).unwrap();
-        *status = Status::Completed;
-        *size = bytes_mem_written;
-        notify.notify_waiters();
-        Ok(data_size)
+            let disk_store_key = self.disk_store.data_store_key(&remote_location);
+            // TODO: Write the data store cache first w/ `incompleted` state and update the state
+            // after finishing writing into the data store.
+            let data_size_wrap = self
+                .disk_store
+                .write_data(disk_store_key.clone(), bytes_to_disk, Some(data_stream))
+                .await;
+            if let Err(e) = data_size_wrap {
+                self.status_of_keys.write().await.remove(&remote_location);
+                return Err(e);
+            }
+            let data_size = data_size_wrap.unwrap();
+            let mut disk_replacer = self.disk_replacer.lock().await;
+            if disk_replacer
+                .put(
+                    remote_location.clone(),
+                    MemDiskStoreReplacerValue::new(disk_store_key.clone(), data_size),
+                )
+                .is_none()
+            {
+                if let Err(e) = self.disk_store.clean_data(&disk_store_key).await {
+                    // TODO: do we need to notify the caller this failure?
+                    warn!(
+                        "Failed to clean data ({}) from disk store: {}",
+                        disk_store_key, e
+                    );
+                }
+                self.status_of_keys.write().await.remove(&remote_location);
+                return Err(ParpulseError::Internal(
+                    "Failed to put data to disk replacer.".to_string(),
+                ));
+            }
+
+            let mut status_of_keys = self.status_of_keys.write().await;
+            let ((status, size), notify) = status_of_keys.get_mut(&remote_location).unwrap();
+            *status = Status::Completed;
+            *size = bytes_mem_written;
+            notify.notify_waiters();
+            Ok(data_size)
+        }
     }
 }
 
