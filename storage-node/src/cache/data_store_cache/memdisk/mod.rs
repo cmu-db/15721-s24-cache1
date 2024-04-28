@@ -201,26 +201,27 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             // If in_progress of remote_location thread fails, it will clean the data from this hash map.
             let mut existed = false;
             loop {
-                let (status, size, notify);
-                if let Some(((status_ref, size_ref), notify_ref)) =
-                    self.status_of_keys.read().await.get(&remote_location)
-                {
+                let status_of_keys = self.status_of_keys.read().await;
+                if let Some(((status, size), notify_ref)) = status_of_keys.get(&remote_location) {
+                    let notify;
                     existed = true;
-                    status = status_ref.clone();
-                    size = *size_ref;
-                    notify = notify_ref.clone();
+                    match status {
+                        Status::Incompleted => {
+                            notify = notify_ref.clone();
+                            *notify_ref.1.lock().await += 1;
+                            // The Notified future is guaranteed to receive wakeups from notify_waiters()
+                            // as soon as it has been created, even if it has not yet been polled.
+                            let notified = notify.0.notified();
+                            drop(status_of_keys);
+                            notified.await;
+                        }
+                        Status::Completed => {
+                            return Ok(*size);
+                        }
+                    }
                 } else {
+                    // FIXME: status_of_keys lock should be released after break
                     break;
-                }
-                match status {
-                    Status::Incompleted => {
-                        // TODO(lanlou): Make these 2 code atomic!!
-                        *notify.1.lock().await += 1;
-                        notify.0.notified().await;
-                    }
-                    Status::Completed => {
-                        return Ok(size);
-                    }
                 }
             }
             if existed {
