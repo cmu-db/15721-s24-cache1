@@ -9,5 +9,5 @@ async fn main() {
         .filter_level(log::LevelFilter::Info)
         .try_init();
     info!("starting storage node server...");
-    storage_node_serve().await.unwrap();
+    storage_node_serve("0.0.0.0", 80).await.unwrap();
 }

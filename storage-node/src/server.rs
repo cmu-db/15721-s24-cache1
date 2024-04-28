@@ -1,4 +1,5 @@
 use log::{info, warn};
+use std::net::IpAddr;
 use std::sync::Arc;
 use storage_common::{RequestParams, S3Request};
 use tokio_stream::wrappers::ReceiverStream;
@@ -12,8 +13,9 @@ use crate::{
 
 const CACHE_BASE_PATH: &str = "cache/";
 
-pub async fn storage_node_serve() -> ParpulseResult<()> {
-    let dummy_size = 1000000;
+pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> {
+    // Should at least be able to store one 100MB file in the cache.
+    let dummy_size = 100 * 1024 * 1024;
     // TODO: Read the type of the cache from config.
     let cache = LruReplacer::new(dummy_size);
     // TODO: cache_base_path should be from config
@@ -47,18 +49,31 @@ pub async fn storage_node_serve() -> ParpulseResult<()> {
                     RequestParams::S3((bucket, vec![keys]))
                 };
                 let result = storage_manager.get_data(request, is_mem_disk_cache).await;
-                let data_rx = result.unwrap();
-
-                let stream = ReceiverStream::new(data_rx);
-                let body = warp::hyper::Body::wrap_stream(stream);
-                let response = warp::http::Response::builder()
-                    .header("Content-Type", "text/plain")
-                    .body(body)
-                    .unwrap();
-                Ok::<_, Rejection>(warp::reply::with_status(
-                    response,
-                    warp::http::StatusCode::OK,
-                ))
+                match result {
+                    Ok(data_rx) => {
+                        let stream = ReceiverStream::new(data_rx);
+                        let body = warp::hyper::Body::wrap_stream(stream);
+                        let response = warp::http::Response::builder()
+                            .header("Content-Type", "text/plain")
+                            .body(body)
+                            .unwrap();
+                        Ok::<_, Rejection>(warp::reply::with_status(
+                            response,
+                            warp::http::StatusCode::OK,
+                        ))
+                    }
+                    Err(e) => {
+                        let error_message = format!("Failed to get data: {}", e);
+                        let response = warp::http::Response::builder()
+                            .status(warp::http::StatusCode::INTERNAL_SERVER_ERROR)
+                            .body(error_message.into())
+                            .unwrap();
+                        Ok::<_, Rejection>(warp::reply::with_status(
+                            response,
+                            warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        ))
+                    }
+                }
             }
         });
 
@@ -71,7 +86,8 @@ pub async fn storage_node_serve() -> ParpulseResult<()> {
         });
 
     let routes = route.or(catch_all);
-    warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
+    let ip_addr: IpAddr = ip_addr.parse().unwrap();
+    warp::serve(routes).run((ip_addr, port)).await;
 
     Ok(())
 }
@@ -91,7 +107,7 @@ mod tests {
 
         // Start the server
         let server_handle = tokio::spawn(async move {
-            storage_node_serve().await.unwrap();
+            storage_node_serve("127.0.0.1", 3030).await.unwrap();
         });
 
         // Give the server some time to start
@@ -125,6 +141,33 @@ mod tests {
         assert_eq!(
             fs::metadata(original_file_path).unwrap().len(),
             fs::metadata(file_path).unwrap().len()
+        );
+
+        server_handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_file_not_exist() {
+        // Start the server
+        let server_handle = tokio::spawn(async move {
+            storage_node_serve("127.0.0.1", 3030).await.unwrap();
+        });
+
+        // Give the server some time to start
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+        let url =
+            "http://localhost:3030/file?bucket=tests-parquet&keys=not_exist.parquet&is_test=true";
+        let client = Client::new();
+        let response = client
+            .get(url)
+            .send()
+            .await
+            .expect("Failed to get response from the server.");
+
+        assert!(
+            response.status().is_server_error(),
+            "Expected 500 status code"
         );
 
         server_handle.abort();
