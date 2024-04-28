@@ -18,6 +18,7 @@ type Timestamp = i32;
 struct LruKNode<V: ReplacerValue> {
     value: V,
     history: VecDeque<Timestamp>,
+    pin_count: usize,
 }
 
 /// Represents an LRU-K replacer.
@@ -65,8 +66,9 @@ impl<K: ReplacerKey, V: ReplacerValue> LruKReplacer<K, V> {
                 } else {
                     self.curr_timestamp - kth_timestamp
                 };
-                if (k_dist > max_k_dist)
-                    || (k_dist == max_k_dist && kth_timestamp < &earliest_timestamp)
+                if ((k_dist > max_k_dist)
+                    || (k_dist == max_k_dist && kth_timestamp < &earliest_timestamp))
+                    && node.pin_count == 0
                 {
                     found = true;
                     max_k_dist = k_dist;
@@ -129,27 +131,49 @@ impl<K: ReplacerKey, V: ReplacerValue> LruKReplacer<K, V> {
             new_history.push_back(self.curr_timestamp);
             self.curr_timestamp += 1;
         }
+        let mut evicted_keys = Vec::new();
+        while (self.size + updated_size) > self.max_capacity {
+            let key_to_evict = self.evict(&key);
+            if key_to_evict.is_none() {
+                return None;
+            }
+            if let Some(evicted_key) = key_to_evict {
+                evicted_keys.push(evicted_key);
+            }
+        }
         self.cache_map.insert(
             key.clone(),
             LruKNode {
                 value,
                 history: new_history,
+                pin_count: 0,
             },
         );
         self.size += updated_size;
-        let mut evicted_keys = Vec::new();
-        while self.size > self.max_capacity {
-            let key_to_evict = self.evict(&key);
-            debug_assert!(
-                key_to_evict.is_some(),
-                "key {:?} should have been evicted when replacer size is greater than max capacity",
-                key
-            );
-            if let Some(evicted_key) = key_to_evict {
-                evicted_keys.push(evicted_key);
-            }
-        }
         Some(evicted_keys)
+    }
+
+    fn pin_value(&mut self, key: &K) -> bool {
+        match self.cache_map.get_mut(key) {
+            Some(node) => {
+                node.pin_count += 1;
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn unpin_value(&mut self, key: &K) -> bool {
+        match self.cache_map.get_mut(key) {
+            Some(node) => {
+                if node.pin_count == 0 {
+                    return false;
+                }
+                node.pin_count -= 1;
+                true
+            }
+            None => false,
+        }
     }
 
     fn peek_value(&self, key: &K) -> Option<&V> {
@@ -174,6 +198,14 @@ impl<K: ReplacerKey, V: ReplacerValue> DataStoreReplacer<K, V> for LruKReplacer<
 
     fn put(&mut self, key: K, value: V) -> Option<Vec<K>> {
         self.put_value(key, value)
+    }
+
+    fn pin(&mut self, key: &K) -> bool {
+        self.pin_value(key)
+    }
+
+    fn unpin(&mut self, key: &K) -> bool {
+        self.unpin_value(key)
     }
 
     fn peek(&self, key: &K) -> Option<&V> {
@@ -318,5 +350,27 @@ mod tests {
             Some(&("value3".to_string(), 4))
         );
         assert_eq!(replacer.get(&("key2".to_string())), None);
+    }
+
+    #[test]
+    fn test_evict_pinned_key() {
+        let mut replacer =
+            LruKReplacer::<ParpulseTestReplacerKey, ParpulseTestReplacerValue>::new(10, 2);
+        replacer.put("key1".to_string(), ("value1".to_string(), 9));
+        assert!(replacer.pin(&"key1".to_string()));
+        assert!(replacer
+            .put("key2".to_string(), ("value2".to_string(), 2))
+            .is_none());
+        assert_eq!(replacer.size(), 9);
+        assert!(replacer.pin(&"key1".to_string()));
+        assert!(replacer.unpin(&"key1".to_string()));
+        assert!(replacer
+            .put("key2".to_string(), ("value2".to_string(), 2))
+            .is_none());
+        assert!(replacer.unpin(&"key1".to_string()));
+        assert!(replacer
+            .put("key2".to_string(), ("value2".to_string(), 2))
+            .is_some());
+        assert_eq!(replacer.size(), 2);
     }
 }
