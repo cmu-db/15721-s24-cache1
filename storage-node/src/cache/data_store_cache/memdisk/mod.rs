@@ -464,13 +464,15 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                             }
                         }
                     }
-                    let mut status_of_keys = self.status_of_keys.write().await;
-                    let ((status, size), notify) =
-                        status_of_keys.get_mut(&remote_location).unwrap();
-                    *status = Status::Completed;
-                    *size = bytes_mem_written;
-                    notify.notify_waiters();
-                    return Ok(bytes_mem_written);
+                    if bytes_to_disk.is_none() {
+                        let mut status_of_keys = self.status_of_keys.write().await;
+                        let ((status, size), notify) =
+                            status_of_keys.get_mut(&remote_location).unwrap();
+                        *status = Status::Completed;
+                        *size = bytes_mem_written;
+                        notify.notify_waiters();
+                        return Ok(bytes_mem_written);
+                    }
                 }
             }
 
@@ -510,7 +512,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             let mut status_of_keys = self.status_of_keys.write().await;
             let ((status, size), notify) = status_of_keys.get_mut(&remote_location).unwrap();
             *status = Status::Completed;
-            *size = bytes_mem_written;
+            *size = data_size;
             notify.notify_waiters();
             Ok(data_size)
         }
@@ -752,6 +754,256 @@ mod tests {
         let put_data_fut_3 = cache.put_data_to_cache(
             remote_location.clone(),
             None,
+            reader3.into_stream().await.unwrap(),
+        );
+
+        let res = join!(put_data_fut_1, put_data_fut_2, put_data_fut_3);
+        assert!(res.0.is_ok());
+        assert!(res.1.is_ok());
+        assert!(res.2.is_ok());
+        assert_eq!(res.0.unwrap(), 112193);
+        assert_eq!(res.1.unwrap(), 112193);
+        assert_eq!(res.2.unwrap(), 112193);
+    }
+
+    #[tokio::test]
+    async fn test_put_data_evicted_from_mem_size() {
+        // 1. put small data1
+        // 2. put small data2, making data1 evicted
+        //    (TODO(lanlou): when adding pin & unpin, this test should be modified)
+        // 3. get data1, should be from disk
+        // 4. get data2, should be from memory
+        // TODO(lanlou): What if we continue accessing data1 and never accessing data2 in
+        // the future? There is no chance for data1 to be put back to memory again currently.
+        let tmp = tempfile::tempdir().unwrap();
+        let disk_base_path = tmp.path().to_owned();
+        let cache = MemDiskStoreCache::new(
+            LruReplacer::new(1024 * 512),
+            disk_base_path.to_str().unwrap().to_string(),
+            Some(LruReplacer::new(950)),
+            None,
+        );
+        let bucket = "tests-text".to_string();
+        let keys = vec!["what-can-i-hold-you-with".to_string()];
+        let data1_key = bucket.clone() + &keys[0];
+        let reader = MockS3Reader::new(bucket.clone(), keys.clone()).await;
+        let data_stream = reader.into_stream().await.unwrap();
+        let written_data_size = cache
+            .put_data_to_cache(data1_key.clone(), Some(930), data_stream)
+            .await
+            .unwrap();
+        assert_eq!(written_data_size, 930);
+
+        let data2_key = bucket.clone() + &keys[0] + "1";
+        let reader = MockS3Reader::new(bucket.clone(), keys).await;
+        let mut written_data_size = cache
+            .put_data_to_cache(
+                data2_key.clone(),
+                Some(930),
+                reader.into_stream().await.unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(written_data_size, 930);
+
+        written_data_size = 0;
+        let mut rx = cache.get_data_from_cache(data1_key).await.unwrap().unwrap();
+        while let Some(data) = rx.recv().await {
+            let data = data.unwrap();
+            written_data_size += data.len();
+        }
+        assert_eq!(written_data_size, 930);
+
+        written_data_size = 0;
+        let mut rx = cache.get_data_from_cache(data2_key).await.unwrap().unwrap();
+        while let Some(data) = rx.recv().await {
+            let data = data.unwrap();
+            written_data_size += data.len();
+        }
+        assert_eq!(written_data_size, 930);
+    }
+
+    #[tokio::test]
+    async fn test_put_get_disk_only_size() {
+        let tmp = tempfile::tempdir().unwrap();
+        let disk_base_path = tmp.path().to_owned();
+        let cache = MemDiskStoreCache::new(
+            LruReplacer::new(1024 * 512),
+            disk_base_path.to_str().unwrap().to_string(),
+            None,
+            None,
+        );
+        let bucket = "tests-parquet".to_string();
+        let keys = vec!["userdata1.parquet".to_string()];
+        let remote_location = bucket.clone() + &keys[0];
+        let reader = MockS3Reader::new(bucket.clone(), keys).await;
+        let written_data_size = cache
+            .put_data_to_cache(
+                remote_location.clone(),
+                Some(113629),
+                reader.into_stream().await.unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(written_data_size, 113629);
+
+        let keys = vec!["userdata2.parquet".to_string()];
+        let remote_location2 = bucket.clone() + &keys[0];
+        let reader = MockS3Reader::new(bucket, keys).await;
+        let mut written_data_size = cache
+            .put_data_to_cache(
+                remote_location2.clone(),
+                Some(112193),
+                reader.into_stream().await.unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(written_data_size, 112193);
+
+        let mut rx = cache
+            .get_data_from_cache(remote_location)
+            .await
+            .unwrap()
+            .unwrap();
+        written_data_size = 0;
+        while let Some(data) = rx.recv().await {
+            let data = data.unwrap();
+            written_data_size += data.len();
+        }
+        assert_eq!(written_data_size, 113629);
+    }
+
+    #[tokio::test]
+    async fn test_put_get_mem_disk_size() {
+        // 1. put a small file (-> memory)
+        // 2. put a large file (-> disk)
+        // 3. get the small file
+        // 4. get the large file
+        let tmp = tempfile::tempdir().unwrap();
+        let disk_base_path = tmp.path().to_owned();
+        let cache = MemDiskStoreCache::new(
+            LruReplacer::new(1024 * 512),
+            disk_base_path.to_str().unwrap().to_string(),
+            Some(LruReplacer::new(950)),
+            Some(950),
+        );
+        let bucket = "tests-text".to_string();
+        let keys = vec!["what-can-i-hold-you-with".to_string()];
+        let data1_key = bucket.clone() + &keys[0];
+        let reader = MockS3Reader::new(bucket.clone(), keys.clone()).await;
+        let written_data_size = cache
+            .put_data_to_cache(
+                data1_key.clone(),
+                Some(930),
+                reader.into_stream().await.unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(written_data_size, 930);
+
+        let bucket = "tests-parquet".to_string();
+        let keys = vec!["userdata1.parquet".to_string()];
+        let data2_key = bucket.clone() + &keys[0];
+        let reader = MockS3Reader::new(bucket.clone(), keys).await;
+        let mut written_data_size = cache
+            .put_data_to_cache(
+                data2_key.clone(),
+                Some(113629),
+                reader.into_stream().await.unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(written_data_size, 113629);
+
+        written_data_size = 0;
+        let mut rx = cache.get_data_from_cache(data1_key).await.unwrap().unwrap();
+        while let Some(data) = rx.recv().await {
+            let data = data.unwrap();
+            written_data_size += data.len();
+        }
+        assert_eq!(written_data_size, 930);
+
+        written_data_size = 0;
+        let mut rx = cache.get_data_from_cache(data2_key).await.unwrap().unwrap();
+        while let Some(data) = rx.recv().await {
+            let data = data.unwrap();
+            written_data_size += data.len();
+        }
+        assert_eq!(written_data_size, 113629);
+    }
+
+    #[tokio::test]
+    async fn test_same_requests_simultaneously_mem_size() {
+        let tmp = tempfile::tempdir().unwrap();
+        let disk_base_path = tmp.path().to_owned();
+        let cache = MemDiskStoreCache::new(
+            LruReplacer::new(1024 * 512),
+            disk_base_path.to_str().unwrap().to_string(),
+            Some(LruReplacer::new(120000)),
+            Some(120000),
+        );
+        let bucket = "tests-parquet".to_string();
+        let keys = vec!["userdata1.parquet".to_string()];
+        let remote_location = bucket.clone() + &keys[0];
+        let reader = MockS3Reader::new(bucket.clone(), keys.clone()).await;
+        let reader2 = MockS3Reader::new(bucket.clone(), keys.clone()).await;
+        let reader3 = MockS3Reader::new(bucket.clone(), keys).await;
+
+        let put_data_fut_1 = cache.put_data_to_cache(
+            remote_location.clone(),
+            Some(113629),
+            reader.into_stream().await.unwrap(),
+        );
+        let put_data_fut_2 = cache.put_data_to_cache(
+            remote_location.clone(),
+            Some(113629),
+            reader2.into_stream().await.unwrap(),
+        );
+        let put_data_fut_3 = cache.put_data_to_cache(
+            remote_location.clone(),
+            Some(113629),
+            reader3.into_stream().await.unwrap(),
+        );
+
+        let res = join!(put_data_fut_1, put_data_fut_2, put_data_fut_3);
+        assert!(res.0.is_ok());
+        assert!(res.1.is_ok());
+        assert!(res.2.is_ok());
+        assert_eq!(res.0.unwrap(), 113629);
+        assert_eq!(res.1.unwrap(), 113629);
+        assert_eq!(res.2.unwrap(), 113629);
+    }
+
+    #[tokio::test]
+    async fn test_same_requests_simultaneously_disk_size() {
+        let tmp = tempfile::tempdir().unwrap();
+        let disk_base_path = tmp.path().to_owned();
+        let cache = MemDiskStoreCache::new(
+            LruReplacer::new(1024 * 512),
+            disk_base_path.to_str().unwrap().to_string(),
+            Some(LruReplacer::new(20)),
+            Some(20),
+        );
+        let bucket = "tests-parquet".to_string();
+        let keys = vec!["userdata2.parquet".to_string()];
+        let remote_location = bucket.clone() + &keys[0];
+        let reader = MockS3Reader::new(bucket.clone(), keys.clone()).await;
+        let reader2 = MockS3Reader::new(bucket.clone(), keys.clone()).await;
+        let reader3 = MockS3Reader::new(bucket.clone(), keys).await;
+
+        let put_data_fut_1 = cache.put_data_to_cache(
+            remote_location.clone(),
+            Some(112193),
+            reader.into_stream().await.unwrap(),
+        );
+        let put_data_fut_2 = cache.put_data_to_cache(
+            remote_location.clone(),
+            Some(112193),
+            reader2.into_stream().await.unwrap(),
+        );
+        let put_data_fut_3 = cache.put_data_to_cache(
+            remote_location.clone(),
+            Some(112193),
             reader3.into_stream().await.unwrap(),
         );
 
