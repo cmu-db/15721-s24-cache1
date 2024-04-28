@@ -5,6 +5,7 @@ use std::fs;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::StreamExt;
+use log::warn;
 use rusqlite::{Connection, DatabaseName, OpenFlags};
 use tokio::sync::{
     mpsc::{channel, Receiver},
@@ -89,7 +90,11 @@ impl<R: DataStoreReplacer<SqliteStoreReplacerKey, SqliteStoreReplacerValue>> Dro
     for SqliteStoreCache<R>
 {
     fn drop(&mut self) {
-        fs::remove_file(self.sqlite_base_path.clone()).expect("remove sqlite db files failed");
+        if fs::metadata(&self.sqlite_base_path).is_ok() {
+            fs::remove_file(self.sqlite_base_path.clone()).expect("remove sqlite db files failed");
+        } else {
+            warn!("sqlite db file not found: {}", self.sqlite_base_path);
+        }
     }
 }
 
