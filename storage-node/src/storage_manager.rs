@@ -309,7 +309,6 @@ mod tests {
     #[tokio::test]
     async fn test_same_requests_simultaneously_disk() {
         let disk_cache = LruReplacer::new(1000000);
-        let mem_cache = LruReplacer::new(10);
 
         let tmp = tempfile::tempdir().unwrap();
         let disk_cache_base_path = tmp.path().to_owned();
@@ -317,8 +316,8 @@ mod tests {
         let data_store_cache = MemDiskStoreCache::new(
             disk_cache,
             disk_cache_base_path.display().to_string(),
-            Some(mem_cache),
-            Some(120000),
+            None,
+            None,
         );
         let storage_manager = StorageManager::new(data_store_cache);
 

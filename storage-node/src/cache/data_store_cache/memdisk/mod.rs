@@ -360,7 +360,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
         let mut status_of_keys = self.status_of_keys.write().await;
         let ((status, size), notify) = status_of_keys.get_mut(&remote_location).unwrap();
         *status = Status::Completed;
-        *size = bytes_mem_written;
+        *size = data_size;
         notify.notify_waiters();
         Ok(data_size)
     }
@@ -578,8 +578,8 @@ mod tests {
         let cache = MemDiskStoreCache::new(
             LruReplacer::new(1024 * 512),
             disk_base_path.to_str().unwrap().to_string(),
-            Some(LruReplacer::new(20)),
-            Some(20),
+            None,
+            None,
         );
         let bucket = "tests-parquet".to_string();
         let keys = vec!["userdata2.parquet".to_string()];
