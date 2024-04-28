@@ -102,7 +102,7 @@ mod tests {
 
     /// WARNING: Put userdata1.parquet in the storage-node/tests/parquet directory before running this test.
     #[tokio::test]
-    async fn test_download_file() {
+    async fn test_server() {
         let original_file_path = "tests/parquet/userdata1.parquet";
 
         // Start the server
@@ -113,6 +113,7 @@ mod tests {
         // Give the server some time to start
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
+        // Test1: test_download_file
         let url =
             "http://localhost:3030/file?bucket=tests-parquet&keys=userdata1.parquet&is_test=true";
         let client = Client::new();
@@ -140,22 +141,12 @@ mod tests {
         // Check if file sizes are equal
         assert_eq!(
             fs::metadata(original_file_path).unwrap().len(),
-            fs::metadata(file_path).unwrap().len()
+            fs::metadata(file_path.clone()).unwrap().len()
         );
 
-        server_handle.abort();
-    }
+        assert_eq!(fs::metadata(file_path).unwrap().len(), 113629);
 
-    #[tokio::test]
-    async fn test_file_not_exist() {
-        // Start the server
-        let server_handle = tokio::spawn(async move {
-            storage_node_serve("127.0.0.1", 3030).await.unwrap();
-        });
-
-        // Give the server some time to start
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
+        // Test2: test_file_not_exist
         let url =
             "http://localhost:3030/file?bucket=tests-parquet&keys=not_exist.parquet&is_test=true";
         let client = Client::new();

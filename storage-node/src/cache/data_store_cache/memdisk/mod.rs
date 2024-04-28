@@ -71,13 +71,13 @@ enum Status {
 }
 
 pub struct MemDiskStoreCache<
-    R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>,
+    R: 'static + DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>,
 > {
     disk_store: DiskStore,
     mem_store: Option<RwLock<MemStore>>,
     /// Cache_key = S3_PATH; Cache_value = (CACHE_BASE_PATH + S3_PATH, size)
-    disk_replacer: Mutex<R>,
-    mem_replacer: Option<Mutex<R>>,
+    disk_replacer: Arc<Mutex<R>>,
+    mem_replacer: Option<Arc<Mutex<R>>>,
     // MemDiskStoreReplacerKey -> remote_location
     // status: 0 -> incompleted; 1 -> completed; 2 -> failed
     // TODO(lanlou): we should clean this hashmap.
@@ -115,15 +115,15 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>>
             MemDiskStoreCache {
                 disk_store,
                 mem_store: Some(RwLock::new(mem_store)),
-                disk_replacer: Mutex::new(disk_replacer),
-                mem_replacer: Some(Mutex::new(mem_replacer.unwrap())),
+                disk_replacer: Arc::new(Mutex::new(disk_replacer)),
+                mem_replacer: Some(Arc::new(Mutex::new(mem_replacer.unwrap()))),
                 status_of_keys: RwLock::new(HashMap::new()),
             }
         } else {
             MemDiskStoreCache {
                 disk_store,
                 mem_store: None,
-                disk_replacer: Mutex::new(disk_replacer),
+                disk_replacer: Arc::new(Mutex::new(disk_replacer)),
                 mem_replacer: None,
                 status_of_keys: RwLock::new(HashMap::new()),
             }
@@ -141,18 +141,20 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
     ) -> ParpulseResult<Option<Receiver<ParpulseResult<Bytes>>>> {
         // TODO: Refine the lock.
         if let Some(mem_store) = &self.mem_store {
-            let mut mem_replacer = self.mem_replacer.as_ref().unwrap().lock().await;
-            if let Some(replacer_value) = mem_replacer.get(&remote_location) {
-                let data_store_key = replacer_value.as_value();
-                match mem_store.read().await.read_data(data_store_key) {
+            let mut data_store_key = None;
+            {
+                let mut mem_replacer = self.mem_replacer.as_ref().unwrap().lock().await;
+                if let Some(replacer_value) = mem_replacer.get(&remote_location) {
+                    data_store_key = Some(replacer_value.as_value().clone());
+                }
+            }
+            if let Some(data_store_key) = data_store_key {
+                match mem_store
+                    .read()
+                    .await
+                    .read_data(&data_store_key, self.mem_replacer.as_ref().unwrap().clone())
+                {
                     Ok(Some(rx)) => {
-                        // TODO(lanlou): actually we should unpin after all the data are consumed...
-                        if !mem_replacer.unpin(&remote_location) {
-                            warn!(
-                                "Failed to unpin the key ({}) in memory replacer.",
-                                remote_location
-                            );
-                        }
                         return Ok(Some(rx));
                     }
                     Ok(None) => {
@@ -165,18 +167,24 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             }
         }
 
-        let mut disk_replacer = self.disk_replacer.lock().await;
-        match disk_replacer.get(&remote_location) {
-            Some(replacer_value) => {
-                let data_store_key = replacer_value.as_value();
-                if let Some(data) = self.disk_store.read_data(data_store_key).await? {
-                    disk_replacer.unpin(&remote_location);
-                    Ok(Some(data))
-                } else {
-                    unreachable!()
+        let data_store_key;
+        {
+            let mut disk_replacer = self.disk_replacer.lock().await;
+            match disk_replacer.get(&remote_location) {
+                Some(replacer_value) => {
+                    data_store_key = replacer_value.as_value().clone();
                 }
+                None => return Ok(None),
             }
-            None => Ok(None),
+        }
+        if let Some(data) = self
+            .disk_store
+            .read_data(&data_store_key, self.disk_replacer.clone())
+            .await?
+        {
+            Ok(Some(data))
+        } else {
+            unreachable!();
         }
     }
 

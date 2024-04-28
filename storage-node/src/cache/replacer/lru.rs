@@ -1,5 +1,3 @@
-use std::ops::Deref;
-
 use hashlink::linked_hash_map;
 use hashlink::LinkedHashMap;
 use log::{debug, warn};
@@ -89,7 +87,7 @@ impl<K: ReplacerKey, V: ReplacerValue> LruReplacer<K, V> {
     fn unpin_key(&mut self, key: &K) -> bool {
         match self.cache_map.get_mut(key) {
             Some((_, pin_count)) => {
-                if *pin_count.deref() == 0 {
+                if *pin_count == 0 {
                     return false;
                 }
                 *pin_count -= 1;

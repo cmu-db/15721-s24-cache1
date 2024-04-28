@@ -343,6 +343,8 @@ mod tests {
         let request_path_keys2 = vec!["userdata1.parquet".to_string()];
         let request_data2 = RequestParams::MockS3((request_path_bucket2, request_path_keys2));
 
+        let mut start_time = Instant::now();
+
         let get_data_fut_1 = storage_manager.get_data(request_data1.clone(), true);
         let get_data_fut_2 = storage_manager.get_data(request_data1.clone(), true);
         let get_data_fut_3 = storage_manager.get_data(request_data2.clone(), true);
@@ -365,5 +367,40 @@ mod tests {
         assert_eq!(consume_receiver(result.3.unwrap()).await, 113629);
         assert!(result.4.is_ok());
         assert_eq!(consume_receiver(result.4.unwrap()).await, 112193);
+
+        let delta_time_miss = Instant::now() - start_time;
+
+        start_time = Instant::now();
+
+        let get_data_fut_1 = storage_manager.get_data(request_data2.clone(), true);
+        let get_data_fut_2 = storage_manager.get_data(request_data1.clone(), true);
+        let get_data_fut_3 = storage_manager.get_data(request_data2.clone(), true);
+        let get_data_fut_4 = storage_manager.get_data(request_data1.clone(), true);
+        let get_data_fut_5 = storage_manager.get_data(request_data1.clone(), true);
+        let result = join!(
+            get_data_fut_1,
+            get_data_fut_2,
+            get_data_fut_3,
+            get_data_fut_4,
+            get_data_fut_5
+        );
+        assert!(result.0.is_ok());
+        assert_eq!(consume_receiver(result.0.unwrap()).await, 113629);
+        assert!(result.1.is_ok());
+        assert_eq!(consume_receiver(result.1.unwrap()).await, 112193);
+        assert!(result.2.is_ok());
+        assert_eq!(consume_receiver(result.2.unwrap()).await, 113629);
+        assert!(result.3.is_ok());
+        assert_eq!(consume_receiver(result.3.unwrap()).await, 112193);
+        assert!(result.4.is_ok());
+        assert_eq!(consume_receiver(result.4.unwrap()).await, 112193);
+
+        let delta_time_hit = Instant::now() - start_time;
+
+        println!(
+            "For parallel test 2, delta time miss: {:?}, delta time miss: {:?}",
+            delta_time_miss, delta_time_hit
+        );
+        assert!(delta_time_miss > delta_time_hit);
     }
 }
