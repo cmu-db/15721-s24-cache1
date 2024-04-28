@@ -211,6 +211,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                 }
                 match status {
                     Status::Incompleted => {
+                        // TODO(lanlou): Make these 2 code atomic!!
                         *notify.1.lock().await += 1;
                         notify.0.notified().await;
                     }
@@ -295,10 +296,11 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                     // delete them from mem_store, and put all of them to disk cache.
                     if let Some(evicted_keys) = replacer_put_status {
                         let mut evicted_bytes_to_disk_inner = Vec::new();
+                        let mut mem_store = mem_store.write().await;
                         for evicted_key in evicted_keys {
                             evicted_bytes_to_disk_inner.push((
                                 evicted_key.clone(),
-                                mem_store.write().await.clean_data(&evicted_key).unwrap(),
+                                mem_store.clean_data(&evicted_key).unwrap(),
                             ));
                         }
                         evicted_bytes_to_disk = Some(evicted_bytes_to_disk_inner);
@@ -355,8 +357,6 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
         // 4. If the data is not written to memory_cache successfully, then cache it to disk.
         // Need to write the data to network for the current key.
         let disk_store_key = self.disk_store.data_store_key(&remote_location);
-        // TODO: Write the data store cache first w/ `incompleted` state and update the state
-        // after finishing writing into the data store.
         let data_size_wrap = self
             .disk_store
             .write_data(disk_store_key.clone(), bytes_to_disk, Some(data_stream))
@@ -570,12 +570,12 @@ mod tests {
     async fn test_same_requests_simultaneously_disk() {
         let tmp = tempfile::tempdir().unwrap();
         let disk_base_path = tmp.path().to_owned();
-        let cache = MemDiskStoreCache::new(
+        let cache = Arc::new(MemDiskStoreCache::new(
             LruReplacer::new(1024 * 512),
             disk_base_path.to_str().unwrap().to_string(),
             None,
             None,
-        );
+        ));
         let bucket = "tests-parquet".to_string();
         let keys = vec!["userdata2.parquet".to_string()];
         let remote_location = bucket.clone() + &keys[0];
@@ -583,41 +583,57 @@ mod tests {
         let reader2 = MockS3Reader::new(bucket.clone(), keys.clone()).await;
         let reader3 = MockS3Reader::new(bucket.clone(), keys).await;
 
-        let put_data_fut_1 = cache.put_data_to_cache(
-            remote_location.clone(),
-            None,
-            reader.into_stream().await.unwrap(),
-        );
-        let put_data_fut_2 = cache.put_data_to_cache(
-            remote_location.clone(),
-            None,
-            reader2.into_stream().await.unwrap(),
-        );
-        let put_data_fut_3 = cache.put_data_to_cache(
-            remote_location.clone(),
-            None,
-            reader3.into_stream().await.unwrap(),
-        );
+        let cache_1 = cache.clone();
+        let remote_location_1 = remote_location.clone();
+        let put_data_fut_1 = tokio::spawn(async move {
+            cache_1
+                .put_data_to_cache(remote_location_1, None, reader.into_stream().await.unwrap())
+                .await
+        });
+
+        let cache_2 = cache.clone();
+        let remote_location_2 = remote_location.clone();
+        let put_data_fut_2 = tokio::spawn(async move {
+            cache_2
+                .put_data_to_cache(
+                    remote_location_2,
+                    None,
+                    reader2.into_stream().await.unwrap(),
+                )
+                .await
+        });
+
+        let cache_3 = cache.clone();
+        let remote_location_3 = remote_location.clone();
+        let put_data_fut_3 = tokio::spawn(async move {
+            cache_3
+                .put_data_to_cache(
+                    remote_location_3,
+                    None,
+                    reader3.into_stream().await.unwrap(),
+                )
+                .await
+        });
 
         let res = join!(put_data_fut_1, put_data_fut_2, put_data_fut_3);
         assert!(res.0.is_ok());
         assert!(res.1.is_ok());
         assert!(res.2.is_ok());
-        assert_eq!(res.0.unwrap(), 112193);
-        assert_eq!(res.1.unwrap(), 112193);
-        assert_eq!(res.2.unwrap(), 112193);
+        assert_eq!(res.0.unwrap().unwrap(), 112193);
+        assert_eq!(res.1.unwrap().unwrap(), 112193);
+        assert_eq!(res.2.unwrap().unwrap(), 112193);
     }
 
     #[tokio::test]
     async fn test_same_requests_simultaneously_mix() {
         let tmp = tempfile::tempdir().unwrap();
         let disk_base_path = tmp.path().to_owned();
-        let cache = MemDiskStoreCache::new(
+        let cache = Arc::new(MemDiskStoreCache::new(
             LruReplacer::new(1024 * 512),
             disk_base_path.to_str().unwrap().to_string(),
             Some(LruReplacer::new(120000)),
             Some(120000),
-        );
+        ));
         let bucket = "tests-parquet".to_string();
         let keys = vec!["userdata1.parquet".to_string()];
         let keys2 = vec!["userdata2.parquet".to_string()];
@@ -628,26 +644,49 @@ mod tests {
         let reader3 = MockS3Reader::new(bucket.clone(), keys2).await;
         let reader4 = MockS3Reader::new(bucket.clone(), keys).await;
 
-        let put_data_fut_1 = cache.put_data_to_cache(
-            remote_location.clone(),
-            None,
-            reader.into_stream().await.unwrap(),
-        );
-        let put_data_fut_2 = cache.put_data_to_cache(
-            remote_location.clone(),
-            None,
-            reader2.into_stream().await.unwrap(),
-        );
-        let put_data_fut_3 = cache.put_data_to_cache(
-            remote_location2.clone(),
-            None,
-            reader3.into_stream().await.unwrap(),
-        );
-        let put_data_fut_4 = cache.put_data_to_cache(
-            remote_location.clone(),
-            None,
-            reader4.into_stream().await.unwrap(),
-        );
+        let cache_1 = cache.clone();
+        let remote_location_1 = remote_location.clone();
+        let put_data_fut_1 = tokio::spawn(async move {
+            cache_1
+                .put_data_to_cache(remote_location_1, None, reader.into_stream().await.unwrap())
+                .await
+        });
+
+        let cache_2 = cache.clone();
+        let remote_location_2 = remote_location.clone();
+        let put_data_fut_2 = tokio::spawn(async move {
+            cache_2
+                .put_data_to_cache(
+                    remote_location_2,
+                    None,
+                    reader2.into_stream().await.unwrap(),
+                )
+                .await
+        });
+
+        let cache_3 = cache.clone();
+        let remote_location_3 = remote_location2.clone();
+        let put_data_fut_3 = tokio::spawn(async move {
+            cache_3
+                .put_data_to_cache(
+                    remote_location_3,
+                    None,
+                    reader3.into_stream().await.unwrap(),
+                )
+                .await
+        });
+
+        let cache_4 = cache.clone();
+        let remote_location_4 = remote_location.clone();
+        let put_data_fut_4 = tokio::spawn(async move {
+            cache_4
+                .put_data_to_cache(
+                    remote_location_4,
+                    None,
+                    reader4.into_stream().await.unwrap(),
+                )
+                .await
+        });
 
         let res = join!(
             put_data_fut_1,
@@ -659,9 +698,9 @@ mod tests {
         assert!(res.1.is_ok());
         assert!(res.2.is_ok());
         assert!(res.3.is_ok());
-        assert_eq!(res.0.unwrap(), 113629);
-        assert_eq!(res.1.unwrap(), 113629);
-        assert_eq!(res.2.unwrap(), 112193);
-        assert_eq!(res.3.unwrap(), 113629);
+        assert_eq!(res.0.unwrap().unwrap(), 113629);
+        assert_eq!(res.1.unwrap().unwrap(), 113629);
+        assert_eq!(res.2.unwrap().unwrap(), 112193);
+        assert_eq!(res.3.unwrap().unwrap(), 113629);
     }
 }
