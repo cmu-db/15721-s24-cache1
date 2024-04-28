@@ -76,10 +76,10 @@ impl<K: ReplacerKey, V: ReplacerValue> LruReplacer<K, V> {
         Some(evicted_keys)
     }
 
-    fn pin_key(&mut self, key: &K) -> bool {
+    fn pin_key(&mut self, key: &K, count: usize) -> bool {
         match self.cache_map.get_mut(key) {
             Some((_, pin_count)) => {
-                *pin_count += 1;
+                *pin_count += count;
                 true
             }
             None => false,
@@ -116,8 +116,8 @@ impl<K: ReplacerKey, V: ReplacerValue> DataStoreReplacer<K, V> for LruReplacer<K
         self.put_value(key, value)
     }
 
-    fn pin(&mut self, key: &K) -> bool {
-        self.pin_key(key)
+    fn pin(&mut self, key: &K, count: usize) -> bool {
+        self.pin_key(key, count)
     }
 
     fn unpin(&mut self, key: &K) -> bool {
@@ -243,12 +243,12 @@ mod tests {
         let mut replacer =
             LruReplacer::<ParpulseTestReplacerKey, ParpulseTestReplacerValue>::new(10);
         replacer.put("key1".to_string(), ("value1".to_string(), 9));
-        assert!(replacer.pin(&"key1".to_string()));
+        assert!(replacer.pin(&"key1".to_string(), 1));
         assert!(replacer
             .put("key2".to_string(), ("value2".to_string(), 2))
             .is_none());
         assert_eq!(replacer.size(), 9);
-        assert!(replacer.pin(&"key1".to_string()));
+        assert!(replacer.pin(&"key1".to_string(), 1));
         assert!(replacer.unpin(&"key1".to_string()));
         assert!(replacer
             .put("key2".to_string(), ("value2".to_string(), 2))

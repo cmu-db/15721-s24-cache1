@@ -282,7 +282,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                     );
                 } else {
                     // TODO(lanlou): currently the pin/unpin relies on after putting, it will **always** get!
-                    mem_replacer.pin(&remote_location);
+                    mem_replacer.pin(&remote_location, 1);
                     // If successfully putting it into mem_replacer, we should record the evicted data,
                     // delete them from mem_store, and put all of them to disk cache.
                     if let Some(evicted_keys) = replacer_put_status {
@@ -336,13 +336,9 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             let ((status, size), notify) = status_of_keys.get_mut(&remote_location).unwrap();
             *status = Status::Completed;
             *size = bytes_mem_written;
-            for _ in 0..*notify.1.lock().await {
-                self.mem_replacer
-                    .as_ref()
-                    .unwrap()
-                    .lock()
-                    .await
-                    .pin(&remote_location);
+            {
+                let mut mem_replacer = self.mem_replacer.as_ref().unwrap().lock().await;
+                mem_replacer.pin(&remote_location, *notify.1.lock().await);
             }
             notify.0.notify_waiters();
             return Ok(bytes_mem_written);
@@ -383,18 +379,17 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                     "Failed to put data to disk replacer.".to_string(),
                 ));
             }
-            disk_replacer.pin(&remote_location);
+            disk_replacer.pin(&remote_location, 1);
         }
         let mut status_of_keys = self.status_of_keys.write().await;
         let ((status, size), notify) = status_of_keys.get_mut(&remote_location).unwrap();
         *status = Status::Completed;
         *size = data_size;
-        {
-            let mut disk_replacer = self.disk_replacer.lock().await;
-            for _ in 0..*notify.1.lock().await {
-                disk_replacer.pin(&remote_location);
-            }
-        }
+        self.disk_replacer
+            .lock()
+            .await
+            .pin(&remote_location, *notify.1.lock().await);
+        // FIXME: disk_replacer lock should be released here
         notify.0.notify_waiters();
         Ok(data_size)
     }
