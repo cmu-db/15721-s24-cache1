@@ -3,8 +3,10 @@ use arrow_array::RecordBatch;
 use futures::stream::StreamExt;
 use futures::TryStreamExt;
 use hyper::Uri;
+use lazy_static::lazy_static;
 use parquet::arrow::{ParquetRecordBatchStreamBuilder, ProjectionMask};
 use reqwest::{Client, Response, Url};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
 use storage_common::RequestParams;
@@ -12,13 +14,29 @@ use tempfile::tempdir;
 use tokio::fs::File as AsyncFile;
 use tokio::sync::mpsc::{channel, Receiver};
 
-use crate::{StorageClient, StorageRequest};
+use crate::{StorageClient, StorageRequest, TableId};
 
 /// The batch size for the record batch.
-const BATCH_SIZE: usize = 3;
-const CHANNEL_CAPACITY: usize = 10;
+const BATCH_SIZE: usize = 100;
+const CHANNEL_CAPACITY: usize = 32;
 const PARAM_BUCKET_KEY: &str = "bucket";
 const PARAM_KEYS_KEY: &str = "keys";
+
+lazy_static! {
+    static ref TABLE_FILE_MAP: HashMap<TableId, String> = {
+        let mut m = HashMap::new();
+        // For mock s3
+        m.insert(0, "userdata1.parquet".to_string());
+        // All the remainings are for real s3
+        for i in 1..=9 {
+            m.insert(i, format!("1m/random_data_1m_{}.parquet", i));
+        }
+        for i in 10..=19 {
+            m.insert(i, format!("100m/random_data_100m_{}.parquet", i - 10));
+        }
+        m
+    };
+}
 
 pub struct StorageClientImpl {
     storage_server_endpoint: Uri,
@@ -49,11 +67,15 @@ impl StorageClientImpl {
     }
 
     /// Returns the physical location of the requested data in RequestParams.
-    async fn get_info_from_catalog(&self, _request: StorageRequest) -> Result<RequestParams> {
-        // FIXME (kunle): Need to discuss with the catalog team.
-        // The following line serves as a placeholder for now.
+    async fn get_info_from_catalog(&self, request: StorageRequest) -> Result<RequestParams> {
         let bucket = "parpulse-test".to_string();
-        let keys = vec!["userdata/userdata1.parquet".to_string()];
+        let table_id = match request {
+            StorageRequest::Table(id) => id,
+            _ => {
+                return Err(anyhow!("Only table request is supported."));
+            }
+        };
+        let keys = vec![TABLE_FILE_MAP.get(&table_id).unwrap().to_string()];
         Ok(RequestParams::S3((bucket, keys)))
     }
 
@@ -92,15 +114,25 @@ impl StorageClientImpl {
             Ok(rx)
         } else {
             Err(anyhow::anyhow!(
-                "Failed to download file. Response: {:?}",
-                response.status()
+                "Failed to download file. Response: {:?}, Body: {}",
+                response.status(),
+                response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| String::from("Failed to read response body"))
             ))
         }
     }
 
-    async fn get_info_from_catalog_test(&self, _request: StorageRequest) -> Result<RequestParams> {
+    async fn get_info_from_catalog_test(&self, request: StorageRequest) -> Result<RequestParams> {
         let bucket = "tests-parquet".to_string();
-        let keys = vec!["userdata1.parquet".to_string()];
+        let table_id = match request {
+            StorageRequest::Table(id) => id,
+            _ => {
+                return Err(anyhow!("Only table request is supported."));
+            }
+        };
+        let keys = vec![TABLE_FILE_MAP.get(&table_id).unwrap().to_string()];
         Ok(RequestParams::MockS3((bucket, keys)))
     }
 
@@ -137,6 +169,7 @@ impl StorageClientImpl {
 
         let url = Url::parse_with_params(&url, params)?;
         let response = client.get(url).send().await?;
+
         Self::get_data_from_response(response).await
     }
 }
@@ -176,7 +209,7 @@ mod tests {
 
     /// WARNING: Put userdata1.parquet in the storage-node/tests/parquet directory before running this test.
     #[tokio::test]
-    async fn test_storage_client_wo_ee_catalog() {
+    async fn test_storage_client_disk() {
         // Create a mock server to serve the parquet file.
         let mut server = Server::new_async().await;
         println!("server host: {}", server.host_with_port());
@@ -190,10 +223,10 @@ mod tests {
             .await;
 
         let server_endpoint = server.url() + "/";
-        // The catalog endpoint is not used anyway. So randomly pass a url.
         let storage_client = StorageClientImpl::new(&server_endpoint, "localhost:3031")
             .expect("Failed to create storage client.");
-        let request = StorageRequest::Table(1);
+        // 0 is the table id for userdata1.parquet on local disk.
+        let request = StorageRequest::Table(0);
         let mut receiver = storage_client
             .request_data_test(request)
             .await
@@ -207,15 +240,22 @@ mod tests {
         let first_batch = &record_batches[0];
         assert_eq!(first_batch.num_columns(), 13);
 
-        let first_names = StringArray::from(vec!["Amanda", "Albert", "Evelyn"]);
-        let last_names = StringArray::from(vec!["Jordan", "Freeman", "Morgan"]);
-        assert_eq!(
-            first_batch.column(2).as_any().downcast_ref::<StringArray>(),
-            Some(&first_names)
-        );
-        assert_eq!(
-            first_batch.column(3).as_any().downcast_ref::<StringArray>(),
-            Some(&last_names)
-        );
+        let real_first_names = StringArray::from(vec!["Amanda", "Albert", "Evelyn"]);
+        let read_last_names = StringArray::from(vec!["Jordan", "Freeman", "Morgan"]);
+        let first_names = first_batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let last_names = first_batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        // Check the first three entries in the first and last name columns.
+        for i in 0..3 {
+            assert_eq!(first_names.value(i), real_first_names.value(i));
+            assert_eq!(last_names.value(i), read_last_names.value(i));
+        }
     }
 }
