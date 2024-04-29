@@ -371,5 +371,13 @@ mod tests {
             .put("key2".to_string(), ("value2".to_string(), 2))
             .is_some());
         assert_eq!(replacer.size(), 2);
+        assert!(replacer.pin(&"key2".to_string(), 1));
+        replacer.put("key3".to_string(), ("value3".to_string(), 8));
+        assert_eq!(replacer.size(), 10);
+        replacer.put("key4".to_string(), ("value4".to_string(), 7));
+        assert_eq!(replacer.size(), 9);
+        assert!(replacer.get(&"key2".to_string()).is_some());
+        assert!(replacer.get(&"key4".to_string()).is_some());
+        assert!(replacer.get(&"key3".to_string()).is_none());
     }
 }
