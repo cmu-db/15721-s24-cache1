@@ -2,7 +2,7 @@ use std::{fs, sync::Arc};
 
 use bytes::Bytes;
 use futures::StreamExt;
-use log::debug;
+use log::info;
 use tokio::sync::{mpsc::Receiver, Mutex};
 
 use crate::{
@@ -30,8 +30,8 @@ pub struct DiskStore {
 impl Drop for DiskStore {
     fn drop(&mut self) {
         if fs::metadata(&self.base_path).is_ok() {
-            debug!("Removing cache files: {:?}", self.base_path);
             fs::remove_dir_all(self.base_path.clone()).expect("remove cache files failed");
+            info!("cache files removed: {}", self.base_path);
         }
     }
 }

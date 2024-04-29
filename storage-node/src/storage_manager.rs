@@ -7,7 +7,7 @@ use crate::{
 
 use bytes::Bytes;
 use log::debug;
-use storage_common::RequestParams;
+use parpulse_client::RequestParams;
 use tokio::sync::mpsc::Receiver;
 
 /// [`StorageManager`] handles the request from the storage client.

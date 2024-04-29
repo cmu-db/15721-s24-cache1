@@ -1,7 +1,7 @@
 use log::{info, warn};
+use parpulse_client::{RequestParams, S3Request};
 use std::net::IpAddr;
 use std::sync::Arc;
-use storage_common::{RequestParams, S3Request};
 use tokio_stream::wrappers::ReceiverStream;
 use warp::{Filter, Rejection};
 

@@ -1,17 +1,20 @@
 use arrow::array::Float64Array;
 use istziio_client::client_api::{StorageClient, StorageRequest};
 use log::info;
+use parpulse_client::client::StorageClientImpl;
 use std::time::Instant;
-use storage_client::client::StorageClientImpl;
-use storage_common::init_logger;
 
 /// This test is for benchmarking.
 
 #[tokio::main]
 async fn main() {
-    init_logger();
+    let _ = env_logger::builder()
+        .filter_level(log::LevelFilter::Info)
+        .is_test(true)
+        .try_init();
+
     let storage_client =
-        StorageClientImpl::new("http://44.220.220.131:8000", "http://127.0.0.1:3031")
+        StorageClientImpl::new("http://44.220.220.131:3030", "http://127.0.0.1:3031")
             .expect("Failed to create storage client.");
     let start_time = Instant::now();
     // Requesting random_data_100m_0.parquet

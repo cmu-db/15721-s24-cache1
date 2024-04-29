@@ -1,22 +1,23 @@
 /// This file serves as an integration test for the client and server.
 /// WARNING: This test assumes that the data returned from the server is userdata1.parquet.
-extern crate storage_client;
-extern crate storage_common;
+extern crate parpulse_client;
 extern crate storage_node;
 
 #[cfg(test)]
 mod tests {
     use arrow::array::{Float64Array, StringArray};
     use istziio_client::client_api::{StorageClient, StorageRequest};
+    use parpulse_client::client::StorageClientImpl;
     use serial_test::serial;
     use std::time::Instant;
-    use storage_client::client::StorageClientImpl;
-    use storage_common::init_logger;
     use storage_node::server::storage_node_serve;
 
     #[test]
     fn setup() {
-        init_logger();
+        let _ = env_logger::builder()
+            .filter_level(log::LevelFilter::Info)
+            .is_test(true)
+            .try_init();
     }
 
     #[tokio::test]

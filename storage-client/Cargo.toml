@@ -1,14 +1,24 @@
 [package]
-name = "storage-client"
+name = "parpulse-client"
 version = "0.1.0"
 edition = "2021"
+authors = ["Yuanxin Cao <caoyuanxin0531@outlook.com>", "Kunle <1041593558@qq.com>", "Lan Lou <lanlou1554@gmail.com>"]
+description = "Client application for Parpulse OLAP database I/O cache service"
+license-file = "LICENSE"
+homepage = "https://github.com/cmu-db/15721-s24-cache1"
+repository = "https://github.com/cmu-db/15721-s24-cache1"
+documentation = "https://github.com/cmu-db/15721-s24-cache1/blob/main/README.md"
+readme = "README.md"
+include = [
+    "src/client.rs",
+    "src/lib.rs"
+]
 
 [dependencies]
 anyhow = "1"
 hyper = "1"
 async-trait = "0.1"
 tokio = { version = "1", features = ["full", "rt-multi-thread"] }
-storage-common = { path = "../storage-common" }
 futures = "0.3"
 reqwest = { version = "0.12", features = ["stream"] }
 tempfile = "3.2"
@@ -18,3 +28,6 @@ mockito = "1.4.0"
 log = "0.4"
 istziio-client = "0.1"
 lazy_static = "1.4"
+enum-as-inner = "0.6"
+serde = { version = "1", features = ["derive"] }
+env_logger = "0.11"
