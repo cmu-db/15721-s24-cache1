@@ -1,8 +1,8 @@
 use futures::lock::Mutex;
 use log::{info, warn};
+use parpulse_client::{RequestParams, S3Request};
 use std::net::IpAddr;
 use std::sync::Arc;
-use storage_client::{RequestParams, S3Request};
 use tokio_stream::wrappers::ReceiverStream;
 use warp::{Filter, Rejection};
 
@@ -101,12 +101,14 @@ pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> 
 mod tests {
     use super::*;
     use reqwest::Client;
+    use serial_test::serial;
     use std::fs;
     use std::io::Write;
     use tempfile::tempdir;
 
     /// WARNING: Put userdata1.parquet in the storage-node/tests/parquet directory before running this test.
     #[tokio::test]
+    #[serial]
     async fn test_download_file() {
         let original_file_path = "tests/parquet/userdata1.parquet";
 
@@ -152,6 +154,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_file_not_exist() {
         // Start the server
         let server_handle = tokio::spawn(async move {

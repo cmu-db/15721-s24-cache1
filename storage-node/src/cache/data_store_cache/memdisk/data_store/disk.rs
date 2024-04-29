@@ -2,6 +2,7 @@ use std::fs;
 
 use bytes::Bytes;
 use futures::StreamExt;
+use log::info;
 use tokio::sync::mpsc::Receiver;
 
 use crate::{
@@ -22,7 +23,10 @@ pub struct DiskStore {
 
 impl Drop for DiskStore {
     fn drop(&mut self) {
-        fs::remove_dir_all(self.base_path.clone()).expect("remove cache files failed");
+        if fs::metadata(&self.base_path).is_ok() {
+            info!("Removing cache files: {}", self.base_path);
+            fs::remove_dir_all(self.base_path.clone()).expect("remove cache files failed");
+        }
     }
 }
 

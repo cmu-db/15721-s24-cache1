@@ -1,7 +1,18 @@
 [package]
-name = "storage-client"
+name = "parpulse-client"
 version = "0.1.0"
 edition = "2021"
+authors = ["Yuanxin Cao <caoyuanxin0531@outlook.com>", "Kunle <1041593558@qq.com>", "Lan Lou <lanlou1554@gmail.com>"]
+description = "Client application for Parpulse OLAP database I/O cache service"
+license-file = "LICENSE"
+homepage = "https://github.com/cmu-db/15721-s24-cache1"
+repository = "https://github.com/cmu-db/15721-s24-cache1"
+documentation = "https://github.com/cmu-db/15721-s24-cache1/blob/main/README.md"
+readme = "README.md"
+include = [
+    "src/client.rs",
+    "src/lib.rs"
+]
 
 [dependencies]
 anyhow = "1"

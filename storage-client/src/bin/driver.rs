@@ -1,8 +1,8 @@
 use arrow::array::Float64Array;
 use istziio_client::client_api::{StorageClient, StorageRequest};
 use log::info;
+use parpulse_client::client::StorageClientImpl;
 use std::time::Instant;
-use storage_client::client::StorageClientImpl;
 
 /// This test is for benchmarking.
 

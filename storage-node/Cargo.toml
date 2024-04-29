@@ -15,7 +15,7 @@ aws-sdk-s3 = "1"
 aws-config = "1"
 aws-smithy-runtime-api = "1"
 async-trait = "0.1"
-storage-client = { path = "../storage-client" }
+parpulse-client = { path = "../storage-client" }
 warp = "0.3"
 tokio-util = "0.7"
 reqwest = "0.12"
@@ -25,3 +25,4 @@ tokio-stream = "0.1"
 rusqlite = { version = "0.31", features = ["blob"] }
 log = "0.4"
 env_logger = "0.11"
+serial_test = "0.4"

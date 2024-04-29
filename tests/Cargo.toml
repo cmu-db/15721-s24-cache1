@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 storage-node = { path = "../storage-node" }
-storage-client = { path = "../storage-client" }
+parpulse-client = { path = "../storage-client" }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 arrow = "50.0.0"
 serial_test = "0.4"
