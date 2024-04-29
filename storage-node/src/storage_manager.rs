@@ -25,7 +25,7 @@ impl<C: DataStoreCache> StorageManager<C> {
     }
 
     pub async fn get_data(
-        &mut self,
+        &self,
         request: RequestParams,
         is_mem_disk_cache: bool,
     ) -> ParpulseResult<Receiver<ParpulseResult<Bytes>>> {
@@ -74,9 +74,11 @@ impl<C: DataStoreCache> StorageManager<C> {
             let data_rx = self
                 .data_store_cache
                 .get_data_from_cache(cache_key.clone())
-                .await?
-                .unwrap();
-            Ok(data_rx)
+                .await?;
+            if data_rx.is_none() {
+                panic!("Data should be in the cache now. {}", cache_key.clone());
+            }
+            Ok(data_rx.unwrap())
         }
     }
 }
@@ -90,7 +92,8 @@ pub trait ParpulseReaderIterator: Iterator<Item = ParpulseResult<usize>> {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
+    use futures::join;
+    use std::{sync::Arc, time::Instant};
 
     use crate::cache::{data_store_cache::memdisk::MemDiskStoreCache, replacer::lru::LruReplacer};
 
@@ -120,7 +123,7 @@ mod tests {
 
         let data_store_cache =
             MemDiskStoreCache::new(cache, cache_base_path.display().to_string(), None, None);
-        let mut storage_manager = StorageManager::new(data_store_cache);
+        let storage_manager = StorageManager::new(data_store_cache);
 
         let bucket = "tests-parquet".to_string();
         let keys = vec!["userdata1.parquet".to_string()];
@@ -176,7 +179,7 @@ mod tests {
             Some(mem_cache),
             Some(950),
         );
-        let mut storage_manager = StorageManager::new(data_store_cache);
+        let storage_manager = StorageManager::new(data_store_cache);
 
         let request_path_small_bucket = "tests-text".to_string();
         let request_path_small_keys = vec!["what-can-i-hold-you-with".to_string()];
@@ -235,7 +238,7 @@ mod tests {
             Some(mem_cache),
             Some(120000),
         );
-        let mut storage_manager = StorageManager::new(data_store_cache);
+        let storage_manager = StorageManager::new(data_store_cache);
 
         let request_path_bucket1 = "tests-parquet".to_string();
         let request_path_keys1 = vec!["userdata1.parquet".to_string()];
@@ -271,5 +274,189 @@ mod tests {
             delta_time_hit_mem, delta_time_hit_disk
         );
         assert!(delta_time_hit_disk > delta_time_hit_mem);
+    }
+
+    #[tokio::test]
+    async fn test_storage_manager_parallel_1() {
+        let disk_cache = LruReplacer::new(1000000);
+
+        let tmp = tempfile::tempdir().unwrap();
+        let disk_cache_base_path = tmp.path().to_owned();
+
+        let data_store_cache = MemDiskStoreCache::new(
+            disk_cache,
+            disk_cache_base_path.display().to_string(),
+            None,
+            None,
+        );
+        let storage_manager = Arc::new(StorageManager::new(data_store_cache));
+
+        let request_path_bucket1 = "tests-parquet".to_string();
+        let request_path_keys1 = vec!["userdata1.parquet".to_string()];
+        let request_data1 = RequestParams::MockS3((request_path_bucket1, request_path_keys1));
+
+        let request_path_bucket2 = "tests-parquet".to_string();
+        let request_path_keys2 = vec!["userdata2.parquet".to_string()];
+        let request_data2 = RequestParams::MockS3((request_path_bucket2, request_path_keys2));
+
+        let storage_manager_1 = storage_manager.clone();
+        let request_data1_1 = request_data1.clone();
+        let get_data_fut_1 =
+            tokio::spawn(async move { storage_manager_1.get_data(request_data1_1, true).await });
+
+        let storage_manager_2 = storage_manager.clone();
+        let request_data1_2 = request_data1.clone();
+        let get_data_fut_2 =
+            tokio::spawn(async move { storage_manager_2.get_data(request_data1_2, true).await });
+
+        let storage_manager_3 = storage_manager.clone();
+        let request_data2_3 = request_data2.clone();
+        let get_data_fut_3 =
+            tokio::spawn(async move { storage_manager_3.get_data(request_data2_3, true).await });
+
+        let storage_manager_4 = storage_manager.clone();
+        let request_data1_4 = request_data1.clone();
+        let get_data_fut_4 =
+            tokio::spawn(async move { storage_manager_4.get_data(request_data1_4, true).await });
+
+        let result = join!(
+            get_data_fut_1,
+            get_data_fut_2,
+            get_data_fut_3,
+            get_data_fut_4
+        );
+        assert!(result.0.is_ok());
+        assert_eq!(consume_receiver(result.0.unwrap().unwrap()).await, 113629);
+        assert!(result.1.is_ok());
+        assert_eq!(consume_receiver(result.1.unwrap().unwrap()).await, 113629);
+        assert!(result.2.is_ok());
+        assert_eq!(consume_receiver(result.2.unwrap().unwrap()).await, 112193);
+        assert!(result.3.is_ok());
+        assert_eq!(consume_receiver(result.3.unwrap().unwrap()).await, 113629);
+    }
+
+    #[tokio::test]
+    async fn test_storage_manager_parallel_2() {
+        let disk_cache = LruReplacer::new(1000000);
+        let mem_cache = LruReplacer::new(120000);
+
+        let tmp = tempfile::tempdir().unwrap();
+        let disk_cache_base_path = tmp.path().to_owned();
+
+        let data_store_cache = MemDiskStoreCache::new(
+            disk_cache,
+            disk_cache_base_path.display().to_string(),
+            Some(mem_cache),
+            Some(120000),
+        );
+        let storage_manager = Arc::new(StorageManager::new(data_store_cache));
+
+        let request_path_bucket1 = "tests-parquet".to_string();
+        let request_path_keys1 = vec!["userdata2.parquet".to_string()];
+        let request_data1 = RequestParams::MockS3((request_path_bucket1, request_path_keys1));
+
+        let request_path_bucket2 = "tests-parquet".to_string();
+        let request_path_keys2 = vec!["userdata1.parquet".to_string()];
+        let request_data2 = RequestParams::MockS3((request_path_bucket2, request_path_keys2));
+
+        let mut start_time = Instant::now();
+
+        let storage_manager_1 = storage_manager.clone();
+        let request_data1_1 = request_data1.clone();
+        let get_data_fut_1 =
+            tokio::spawn(async move { storage_manager_1.get_data(request_data1_1, true).await });
+
+        let storage_manager_2 = storage_manager.clone();
+        let request_data1_2 = request_data1.clone();
+        let get_data_fut_2 =
+            tokio::spawn(async move { storage_manager_2.get_data(request_data1_2, true).await });
+
+        let storage_manager_3 = storage_manager.clone();
+        let request_data2_3 = request_data2.clone();
+        let get_data_fut_3 =
+            tokio::spawn(async move { storage_manager_3.get_data(request_data2_3, true).await });
+
+        let storage_manager_4 = storage_manager.clone();
+        let request_data2_4 = request_data2.clone();
+        let get_data_fut_4 =
+            tokio::spawn(async move { storage_manager_4.get_data(request_data2_4, true).await });
+
+        let storage_manager_5 = storage_manager.clone();
+        let request_data1_5 = request_data1.clone();
+        let get_data_fut_5 =
+            tokio::spawn(async move { storage_manager_5.get_data(request_data1_5, true).await });
+
+        let result = join!(
+            get_data_fut_1,
+            get_data_fut_2,
+            get_data_fut_3,
+            get_data_fut_4,
+            get_data_fut_5
+        );
+        assert!(result.0.is_ok());
+        assert_eq!(consume_receiver(result.0.unwrap().unwrap()).await, 112193);
+        assert!(result.1.is_ok());
+        assert_eq!(consume_receiver(result.1.unwrap().unwrap()).await, 112193);
+        assert!(result.2.is_ok());
+        assert_eq!(consume_receiver(result.2.unwrap().unwrap()).await, 113629);
+        assert!(result.3.is_ok());
+        assert_eq!(consume_receiver(result.3.unwrap().unwrap()).await, 113629);
+        assert!(result.4.is_ok());
+        assert_eq!(consume_receiver(result.4.unwrap().unwrap()).await, 112193);
+
+        let delta_time_miss = Instant::now() - start_time;
+
+        start_time = Instant::now();
+
+        let storage_manager_1 = storage_manager.clone();
+        let request_data2_1 = request_data2.clone();
+        let get_data_fut_1 =
+            tokio::spawn(async move { storage_manager_1.get_data(request_data2_1, true).await });
+
+        let storage_manager_2 = storage_manager.clone();
+        let request_data1_2 = request_data1.clone();
+        let get_data_fut_2 =
+            tokio::spawn(async move { storage_manager_2.get_data(request_data1_2, true).await });
+
+        let storage_manager_3 = storage_manager.clone();
+        let request_data2_3 = request_data2.clone();
+        let get_data_fut_3 =
+            tokio::spawn(async move { storage_manager_3.get_data(request_data2_3, true).await });
+
+        let storage_manager_4 = storage_manager.clone();
+        let request_data1_4 = request_data1.clone();
+        let get_data_fut_4 =
+            tokio::spawn(async move { storage_manager_4.get_data(request_data1_4, true).await });
+
+        let storage_manager_5 = storage_manager.clone();
+        let request_data1_5 = request_data1.clone();
+        let get_data_fut_5 =
+            tokio::spawn(async move { storage_manager_5.get_data(request_data1_5, true).await });
+
+        let result = join!(
+            get_data_fut_1,
+            get_data_fut_2,
+            get_data_fut_3,
+            get_data_fut_4,
+            get_data_fut_5
+        );
+        assert!(result.0.is_ok());
+        assert_eq!(consume_receiver(result.0.unwrap().unwrap()).await, 113629);
+        assert!(result.1.is_ok());
+        assert_eq!(consume_receiver(result.1.unwrap().unwrap()).await, 112193);
+        assert!(result.2.is_ok());
+        assert_eq!(consume_receiver(result.2.unwrap().unwrap()).await, 113629);
+        assert!(result.3.is_ok());
+        assert_eq!(consume_receiver(result.3.unwrap().unwrap()).await, 112193);
+        assert!(result.4.is_ok());
+        assert_eq!(consume_receiver(result.4.unwrap().unwrap()).await, 112193);
+
+        let delta_time_hit = Instant::now() - start_time;
+
+        println!(
+            "For parallel test 2, delta time miss: {:?}, delta time miss: {:?}",
+            delta_time_miss, delta_time_hit
+        );
+        assert!(delta_time_miss > delta_time_hit);
     }
 }

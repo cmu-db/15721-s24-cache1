@@ -1,4 +1,3 @@
-use futures::lock::Mutex;
 use log::{info, warn};
 use parpulse_client::{RequestParams, S3Request};
 use std::net::IpAddr;
@@ -23,7 +22,7 @@ pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> 
     let data_store_cache = MemDiskStoreCache::new(cache, CACHE_BASE_PATH.to_string(), None, None);
     let is_mem_disk_cache = true;
     // TODO: try to use more fine-grained lock instead of locking the whole storage_manager
-    let storage_manager = Arc::new(Mutex::new(StorageManager::new(data_store_cache)));
+    let storage_manager = Arc::new(StorageManager::new(data_store_cache));
 
     let route = warp::path!("file")
         .and(warp::path::end())
@@ -49,11 +48,7 @@ pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> 
                 } else {
                     RequestParams::S3((bucket, vec![keys]))
                 };
-                let result = storage_manager
-                    .lock()
-                    .await
-                    .get_data(request, is_mem_disk_cache)
-                    .await;
+                let result = storage_manager.get_data(request, is_mem_disk_cache).await;
                 match result {
                     Ok(data_rx) => {
                         let stream = ReceiverStream::new(data_rx);
@@ -101,15 +96,13 @@ pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> 
 mod tests {
     use super::*;
     use reqwest::Client;
-    use serial_test::serial;
     use std::fs;
     use std::io::Write;
     use tempfile::tempdir;
 
     /// WARNING: Put userdata1.parquet in the storage-node/tests/parquet directory before running this test.
     #[tokio::test]
-    #[serial]
-    async fn test_download_file() {
+    async fn test_server() {
         let original_file_path = "tests/parquet/userdata1.parquet";
 
         // Start the server
@@ -120,6 +113,7 @@ mod tests {
         // Give the server some time to start
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
+        // Test1: test_download_file
         let url =
             "http://localhost:3030/file?bucket=tests-parquet&keys=userdata1.parquet&is_test=true";
         let client = Client::new();
@@ -147,23 +141,12 @@ mod tests {
         // Check if file sizes are equal
         assert_eq!(
             fs::metadata(original_file_path).unwrap().len(),
-            fs::metadata(file_path).unwrap().len()
+            fs::metadata(file_path.clone()).unwrap().len()
         );
 
-        server_handle.abort();
-    }
+        assert_eq!(fs::metadata(file_path).unwrap().len(), 113629);
 
-    #[tokio::test]
-    #[serial]
-    async fn test_file_not_exist() {
-        // Start the server
-        let server_handle = tokio::spawn(async move {
-            storage_node_serve("127.0.0.1", 3030).await.unwrap();
-        });
-
-        // Give the server some time to start
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
+        // Test2: test_file_not_exist
         let url =
             "http://localhost:3030/file?bucket=tests-parquet&keys=not_exist.parquet&is_test=true";
         let client = Client::new();

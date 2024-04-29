@@ -37,6 +37,10 @@ pub trait DataStoreReplacer<K: ReplacerKey, V: ReplacerValue>: Send + Sync {
     /// Returns `Some`: insertion successful with a list of keys that are evicted from the cache.
     fn put(&mut self, key: K, value: V) -> Option<Vec<K>>;
 
+    fn pin(&mut self, key: &K, count: usize) -> bool;
+
+    fn unpin(&mut self, key: &K) -> bool;
+
     /// Returns a reference to the value in the replacer with no side effect on the
     /// replacer.
     fn peek(&self, key: &K) -> Option<&V>;

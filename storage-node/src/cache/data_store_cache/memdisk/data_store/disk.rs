@@ -1,12 +1,18 @@
-use std::fs;
+use std::{fs, sync::Arc};
 
 use bytes::Bytes;
 use futures::StreamExt;
 use log::info;
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::{mpsc::Receiver, Mutex};
 
 use crate::{
-    disk::disk_manager::DiskManager, error::ParpulseResult, storage_reader::StorageReaderStream,
+    cache::{
+        data_store_cache::memdisk::{MemDiskStoreReplacerKey, MemDiskStoreReplacerValue},
+        replacer::DataStoreReplacer,
+    },
+    disk::disk_manager::DiskManager,
+    error::ParpulseResult,
+    storage_reader::StorageReaderStream,
 };
 
 /// TODO(lanlou): make them configurable.
@@ -36,7 +42,6 @@ impl DiskStore {
         if !final_base_path.ends_with('/') {
             final_base_path += "/";
         }
-
         Self {
             disk_manager,
             base_path: final_base_path,
@@ -47,10 +52,14 @@ impl DiskStore {
 impl DiskStore {
     /// Reads data from the disk store. The method returns a stream of data read from the disk
     /// store.
-    pub async fn read_data(
+    pub async fn read_data<R>(
         &self,
         key: &str,
-    ) -> ParpulseResult<Option<Receiver<ParpulseResult<Bytes>>>> {
+        disk_replacer: Arc<Mutex<R>>,
+    ) -> ParpulseResult<Option<Receiver<ParpulseResult<Bytes>>>>
+    where
+        R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue> + 'static,
+    {
         // TODO(lanlou): we later may consider the remaining space to decide the buffer size
         let mut buffer_size = self.disk_manager.file_size(key).await? as usize;
         if buffer_size > MAX_DISK_READER_BUFFER_SIZE {
@@ -59,6 +68,7 @@ impl DiskStore {
         // FIXME: Shall we consider the situation where the data is not found?
         let mut disk_stream = self.disk_manager.disk_read_stream(key, buffer_size).await?;
         let (tx, rx) = tokio::sync::mpsc::channel(DEFAULT_DISK_CHANNEL_BUFFER_SIZE);
+        let key_str = key.to_string().clone();
         tokio::spawn(async move {
             loop {
                 match disk_stream.next().await {
@@ -71,6 +81,8 @@ impl DiskStore {
                     None => break,
                 }
             }
+            // TODO(lanlou): when second read, so there is no need to unpin, how to improve?
+            disk_replacer.lock().await.unpin(&key_str);
         });
         Ok(Some(rx))
     }

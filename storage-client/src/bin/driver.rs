@@ -14,7 +14,7 @@ async fn main() {
         .try_init();
 
     let storage_client =
-        StorageClientImpl::new("http://44.220.220.131:8000", "http://127.0.0.1:3031")
+        StorageClientImpl::new("http://44.220.220.131:3030", "http://127.0.0.1:3031")
             .expect("Failed to create storage client.");
     let start_time = Instant::now();
     // Requesting random_data_100m_0.parquet
