@@ -103,7 +103,7 @@ impl<R: DataStoreReplacer<SqliteStoreReplacerKey, SqliteStoreReplacerValue>> Dat
     for SqliteStoreCache<R>
 {
     async fn get_data_from_cache(
-        &mut self,
+        &self,
         remote_location: String,
     ) -> ParpulseResult<Option<Receiver<ParpulseResult<Bytes>>>> {
         let mut replacer = self.replacer.lock().await;
@@ -136,7 +136,7 @@ impl<R: DataStoreReplacer<SqliteStoreReplacerKey, SqliteStoreReplacerValue>> Dat
     }
 
     async fn put_data_to_cache(
-        &mut self,
+        &self,
         remote_location: String,
         data_size: Option<usize>,
         mut data_stream: StorageReaderStream,
@@ -187,7 +187,7 @@ mod tests {
         let sqlite_base_path = tmp.path().to_owned().join(Path::new("sqlite_test.db"));
         let replacer = LruReplacer::new(1024);
         let buffer_size = 100;
-        let mut cache = SqliteStoreCache::new(
+        let cache = SqliteStoreCache::new(
             replacer,
             sqlite_base_path.to_str().unwrap().to_string(),
             Some(buffer_size),
