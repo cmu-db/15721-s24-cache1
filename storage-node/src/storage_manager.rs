@@ -52,7 +52,7 @@ impl<C: DataStoreCache> StorageManager<C> {
         // reader as one S3 key for one reader.
         let cache_key = format!("{}-{}", bucket, keys.join(","));
         let hash = calculate_hash_crc32fast(cache_key.as_bytes());
-        let cache_index = hash as usize % self.data_store_caches.len();
+        let cache_index = hash % self.data_store_caches.len();
         let data_store_cache = self.data_store_caches.get(cache_index).unwrap();
 
         debug!(
