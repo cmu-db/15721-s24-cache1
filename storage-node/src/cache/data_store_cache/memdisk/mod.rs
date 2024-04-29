@@ -1,8 +1,10 @@
 pub mod data_store;
 
+use std::{collections::HashMap, sync::Arc};
+
 use futures::stream::StreamExt;
 use log::warn;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, Notify, RwLock};
 
 use crate::{
     cache::{
@@ -27,6 +29,11 @@ pub const DEFAULT_MEM_CACHE_MAX_FILE_SIZE: usize = 1024 * 512;
 
 /// [`MemDiskStoreReplacerKey`] is a path to the remote object store.
 pub type MemDiskStoreReplacerKey = String;
+
+/// Status -> completed/incompleted; usize -> file_size
+/// Notify -> notify; usize -> notify_waiter_count
+/// FIXME: make (Notify, Mutex<usize>) a struct to make it more readable.
+type StatusKeyHashMap = HashMap<String, ((Status, usize), Arc<(Notify, Mutex<usize>)>)>;
 
 pub struct MemDiskStoreReplacerValue {
     /// The path to the data store. For mem store, it should be data's s3 path. For disk
@@ -58,14 +65,24 @@ impl ReplacerValue for MemDiskStoreReplacerValue {
     }
 }
 
+#[derive(Clone)]
+enum Status {
+    Incompleted,
+    Completed,
+}
+
 pub struct MemDiskStoreCache<
-    R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>,
+    R: 'static + DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>,
 > {
     disk_store: DiskStore,
-    mem_store: Option<MemStore>,
+    mem_store: Option<RwLock<MemStore>>,
     /// Cache_key = S3_PATH; Cache_value = (CACHE_BASE_PATH + S3_PATH, size)
-    disk_replacer: RwLock<R>,
-    mem_replacer: Option<RwLock<R>>,
+    disk_replacer: Arc<Mutex<R>>,
+    mem_replacer: Option<Arc<Mutex<R>>>,
+    // MemDiskStoreReplacerKey -> remote_location
+    // status: 0 -> incompleted; 1 -> completed; 2 -> failed
+    // TODO(lanlou): we should clean this hashmap.
+    status_of_keys: RwLock<StatusKeyHashMap>,
 }
 
 /// This method creates a `MemDiskStoreCache` instance, and memory can be disabled by setting
@@ -98,16 +115,18 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>>
             let mem_store = MemStore::new(mem_max_file_size);
             MemDiskStoreCache {
                 disk_store,
-                mem_store: Some(mem_store),
-                disk_replacer: RwLock::new(disk_replacer),
-                mem_replacer: Some(RwLock::new(mem_replacer.unwrap())),
+                mem_store: Some(RwLock::new(mem_store)),
+                disk_replacer: Arc::new(Mutex::new(disk_replacer)),
+                mem_replacer: Some(Arc::new(Mutex::new(mem_replacer.unwrap()))),
+                status_of_keys: RwLock::new(HashMap::new()),
             }
         } else {
             MemDiskStoreCache {
                 disk_store,
                 mem_store: None,
-                disk_replacer: RwLock::new(disk_replacer),
+                disk_replacer: Arc::new(Mutex::new(disk_replacer)),
                 mem_replacer: None,
+                status_of_keys: RwLock::new(HashMap::new()),
             }
         }
     }
@@ -118,19 +137,30 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
     for MemDiskStoreCache<R>
 {
     async fn get_data_from_cache(
-        &mut self,
+        &self,
         remote_location: String,
     ) -> ParpulseResult<Option<Receiver<ParpulseResult<Bytes>>>> {
         // TODO: Refine the lock.
         if let Some(mem_store) = &self.mem_store {
-            let mut mem_replacer = self.mem_replacer.as_ref().unwrap().write().await;
-            if let Some(replacer_value) = mem_replacer.get(&remote_location) {
-                let data_store_key = replacer_value.as_value();
-                match mem_store.read_data(data_store_key) {
-                    Ok(Some(rx)) => return Ok(Some(rx)),
+            let mut data_store_key = None;
+            {
+                let mut mem_replacer = self.mem_replacer.as_ref().unwrap().lock().await;
+                if let Some(replacer_value) = mem_replacer.get(&remote_location) {
+                    data_store_key = Some(replacer_value.as_value().clone());
+                }
+            }
+            if let Some(data_store_key) = data_store_key {
+                match mem_store
+                    .read()
+                    .await
+                    .read_data(&data_store_key, self.mem_replacer.as_ref().unwrap().clone())
+                {
+                    Ok(Some(rx)) => {
+                        return Ok(Some(rx));
+                    }
                     Ok(None) => {
                         return Err(ParpulseError::Internal(
-                            "Memory replacer and memory store keys are inconsistent.".to_string(),
+                            "Memory replacer and memory store is inconsistent.".to_string(),
                         ))
                     }
                     Err(e) => return Err(e),
@@ -138,26 +168,77 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             }
         }
 
-        let mut disk_replacer = self.disk_replacer.write().await;
-        match disk_replacer.get(&remote_location) {
-            Some(replacer_value) => {
-                let data_store_key = replacer_value.as_value();
-                if let Some(data) = self.disk_store.read_data(data_store_key).await? {
-                    Ok(Some(data))
-                } else {
-                    unreachable!()
+        let data_store_key;
+        {
+            let mut disk_replacer = self.disk_replacer.lock().await;
+            match disk_replacer.get(&remote_location) {
+                Some(replacer_value) => {
+                    data_store_key = replacer_value.as_value().clone();
                 }
+                None => return Ok(None),
             }
-            None => Ok(None),
+        }
+        if let Some(data) = self
+            .disk_store
+            .read_data(&data_store_key, self.disk_replacer.clone())
+            .await?
+        {
+            Ok(Some(data))
+        } else {
+            return Err(ParpulseError::Internal(
+                "Disk replacer and disk store is inconsistent.".to_string(),
+            ));
         }
     }
 
     async fn put_data_to_cache(
-        &mut self,
+        &self,
         remote_location: String,
         _data_size: Option<usize>,
         mut data_stream: StorageReaderStream,
     ) -> ParpulseResult<usize> {
+        {
+            // If in_progress of remote_location thread fails, it will clean the data from this hash map.
+            let mut existed = false;
+            loop {
+                let status_of_keys = self.status_of_keys.read().await;
+                if let Some(((status, size), notify_ref)) = status_of_keys.get(&remote_location) {
+                    let notify;
+                    existed = true;
+                    match status {
+                        Status::Incompleted => {
+                            notify = notify_ref.clone();
+                            *notify_ref.1.lock().await += 1;
+                            // The Notified future is guaranteed to receive wakeups from notify_waiters()
+                            // as soon as it has been created, even if it has not yet been polled.
+                            let notified = notify.0.notified();
+                            drop(status_of_keys);
+                            notified.await;
+                        }
+                        Status::Completed => {
+                            return Ok(*size);
+                        }
+                    }
+                } else {
+                    // FIXME: status_of_keys lock should be released after break
+                    break;
+                }
+            }
+            if existed {
+                // Another in progress of remote_location thread fails
+                return Err(ParpulseError::Internal(
+                    "Put_data_to_cache fails".to_string(),
+                ));
+            }
+            self.status_of_keys.write().await.insert(
+                remote_location.clone(),
+                (
+                    (Status::Incompleted, 0),
+                    Arc::new((Notify::new(), Mutex::new(0))),
+                ),
+            );
+        }
+
         // TODO: Refine the lock.
         // TODO(lanlou): Also write the data to network.
         let mut bytes_to_disk = None;
@@ -166,14 +247,17 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             None;
         // 1. If the mem_store is enabled, first try to write the data to memory.
         // Note: Only file which size < mem_max_file_size can be written to memory.
-        if let Some(mem_store) = &mut self.mem_store {
+        if let Some(mem_store) = &self.mem_store {
             loop {
                 match data_stream.next().await {
                     Some(Ok(bytes)) => {
                         bytes_mem_written += bytes.len();
                         // TODO: Need to write the data to network.
-                        if let Some((bytes_vec, _)) =
-                            mem_store.write_data(remote_location.clone(), bytes)
+                        // TODO(lanlou): we need benchmark future, to put this lock outside the loop.
+                        if let Some((bytes_vec, _)) = mem_store
+                            .write()
+                            .await
+                            .write_data(remote_location.clone(), bytes)
                         {
                             // If write_data returns something, it means the file size is too large
                             // to fit in the memory. We should put it to disk cache.
@@ -181,7 +265,12 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                             break;
                         }
                     }
-                    Some(Err(e)) => return Err(e),
+                    Some(Err(e)) => {
+                        // TODO(lanlou): Every time it returns an error, I need to manually add this clean code...
+                        // How to improve?
+                        self.status_of_keys.write().await.remove(&remote_location);
+                        return Err(e);
+                    }
                     None => break,
                 }
             }
@@ -189,7 +278,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             if bytes_to_disk.is_none() {
                 // If bytes_to_disk has nothing, it means the data has been successfully written to memory.
                 // We have to put it into mem_replacer too.
-                let mut mem_replacer = self.mem_replacer.as_ref().unwrap().write().await;
+                let mut mem_replacer = self.mem_replacer.as_ref().unwrap().lock().await;
                 let replacer_put_status = mem_replacer.put(
                     remote_location.clone(),
                     MemDiskStoreReplacerValue::new(remote_location.clone(), bytes_mem_written),
@@ -197,20 +286,29 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                 // Insertion fails.
                 if replacer_put_status.is_none() {
                     // Put the data to disk cache.
-                    bytes_to_disk = Some(mem_store.clean_data(&remote_location).unwrap().0);
+                    bytes_to_disk = Some(
+                        mem_store
+                            .write()
+                            .await
+                            .clean_data(&remote_location)
+                            .unwrap()
+                            .0,
+                    );
                 } else {
+                    // TODO(lanlou): currently the pin/unpin relies on after putting, it will **always** get!
+                    mem_replacer.pin(&remote_location, 1);
                     // If successfully putting it into mem_replacer, we should record the evicted data,
                     // delete them from mem_store, and put all of them to disk cache.
                     if let Some(evicted_keys) = replacer_put_status {
-                        evicted_bytes_to_disk = Some(
-                            evicted_keys
-                                .iter()
-                                .map(|key| {
-                                    let (bytes_vec, data_size) = mem_store.clean_data(key).unwrap();
-                                    (key.clone(), (bytes_vec, data_size))
-                                })
-                                .collect(),
-                        );
+                        let mut evicted_bytes_to_disk_inner = Vec::new();
+                        let mut mem_store = mem_store.write().await;
+                        for evicted_key in evicted_keys {
+                            evicted_bytes_to_disk_inner.push((
+                                evicted_key.clone(),
+                                mem_store.clean_data(&evicted_key).unwrap(),
+                            ));
+                        }
+                        evicted_bytes_to_disk = Some(evicted_bytes_to_disk_inner);
                     }
                 }
             }
@@ -225,7 +323,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                 self.disk_store
                     .write_data(disk_store_key.clone(), Some(bytes_vec), None)
                     .await?;
-                let mut disk_replacer = self.disk_replacer.write().await;
+                let mut disk_replacer = self.disk_replacer.lock().await;
                 if disk_replacer
                     .put(
                         remote_location_evicted,
@@ -233,36 +331,88 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                     )
                     .is_none()
                 {
-                    self.disk_store.clean_data(&disk_store_key).await?;
+                    if let Err(e) = self.disk_store.clean_data(&disk_store_key).await {
+                        warn!(
+                            "Failed to clean data ({}) from disk store: {}",
+                            disk_store_key, e
+                        );
+                    }
+                    warn!(
+                        "Failed to put evicted data ({}) to disk replacer.",
+                        disk_store_key
+                    );
                 }
             }
         }
 
         // 3. If the data is successfully written to memory, directly return.
         if self.mem_store.is_some() && bytes_to_disk.is_none() {
+            let notify;
+            {
+                let mut status_of_keys = self.status_of_keys.write().await;
+                let ((status, size), notify_ref) =
+                    status_of_keys.get_mut(&remote_location).unwrap();
+                *status = Status::Completed;
+                *size = bytes_mem_written;
+                {
+                    let mut mem_replacer = self.mem_replacer.as_ref().unwrap().lock().await;
+                    mem_replacer.pin(&remote_location, *notify_ref.1.lock().await);
+                }
+                notify = notify_ref.clone();
+            }
+            // FIXME: status_of_keys write lock is released here, so the waken thread can immediately grab the lock
+            notify.0.notify_waiters();
             return Ok(bytes_mem_written);
         }
 
         // 4. If the data is not written to memory_cache successfully, then cache it to disk.
         // Need to write the data to network for the current key.
         let disk_store_key = self.disk_store.data_store_key(&remote_location);
-        // TODO: Write the data store cache first w/ `incompleted` state and update the state
-        // after finishing writing into the data store.
-        let data_size = self
+        let data_size_wrap = self
             .disk_store
             .write_data(disk_store_key.clone(), bytes_to_disk, Some(data_stream))
-            .await?;
-        let mut disk_replacer = self.disk_replacer.write().await;
-        if disk_replacer
-            .put(
-                remote_location,
-                MemDiskStoreReplacerValue::new(disk_store_key.clone(), data_size),
-            )
-            .is_none()
-        {
-            self.disk_store.clean_data(&disk_store_key).await?;
-            // TODO: do we need to notify the caller this failure?
+            .await;
+        if let Err(e) = data_size_wrap {
+            self.status_of_keys.write().await.remove(&remote_location);
+            return Err(e);
         }
+        let data_size = data_size_wrap.unwrap();
+        {
+            let mut disk_replacer = self.disk_replacer.lock().await;
+            if disk_replacer
+                .put(
+                    remote_location.clone(),
+                    MemDiskStoreReplacerValue::new(disk_store_key.clone(), data_size),
+                )
+                .is_none()
+            {
+                if let Err(e) = self.disk_store.clean_data(&disk_store_key).await {
+                    // TODO: do we need to notify the caller this failure?
+                    warn!(
+                        "Failed to clean data ({}) from disk store: {}",
+                        disk_store_key, e
+                    );
+                }
+                self.status_of_keys.write().await.remove(&remote_location);
+                return Err(ParpulseError::Internal(
+                    "Failed to put data to disk replacer.".to_string(),
+                ));
+            }
+            disk_replacer.pin(&remote_location, 1);
+        }
+        let notify;
+        {
+            let mut status_of_keys = self.status_of_keys.write().await;
+            let ((status, size), notify_ref) = status_of_keys.get_mut(&remote_location).unwrap();
+            *status = Status::Completed;
+            *size = data_size;
+            self.disk_replacer
+                .lock()
+                .await
+                .pin(&remote_location, *notify_ref.1.lock().await);
+            notify = notify_ref.clone();
+        }
+        notify.0.notify_waiters();
         Ok(data_size)
     }
 }
@@ -273,6 +423,7 @@ mod tests {
         cache::replacer::lru::LruReplacer,
         storage_reader::{s3_diskmock::MockS3Reader, AsyncStorageReader},
     };
+    use futures::join;
 
     use super::*;
     #[tokio::test]
@@ -286,7 +437,7 @@ mod tests {
         // the future? There is no chance for data1 to be put back to memory again currently.
         let tmp = tempfile::tempdir().unwrap();
         let disk_base_path = tmp.path().to_owned();
-        let mut cache = MemDiskStoreCache::new(
+        let cache = MemDiskStoreCache::new(
             LruReplacer::new(1024 * 512),
             disk_base_path.to_str().unwrap().to_string(),
             Some(LruReplacer::new(950)),
@@ -332,7 +483,7 @@ mod tests {
     async fn test_put_get_disk_only() {
         let tmp = tempfile::tempdir().unwrap();
         let disk_base_path = tmp.path().to_owned();
-        let mut cache = MemDiskStoreCache::new(
+        let cache = MemDiskStoreCache::new(
             LruReplacer::new(1024 * 512),
             disk_base_path.to_str().unwrap().to_string(),
             None,
@@ -386,7 +537,7 @@ mod tests {
         // 4. get the large file
         let tmp = tempfile::tempdir().unwrap();
         let disk_base_path = tmp.path().to_owned();
-        let mut cache = MemDiskStoreCache::new(
+        let cache = MemDiskStoreCache::new(
             LruReplacer::new(1024 * 512),
             disk_base_path.to_str().unwrap().to_string(),
             Some(LruReplacer::new(950)),
@@ -427,5 +578,143 @@ mod tests {
             written_data_size += data.len();
         }
         assert_eq!(written_data_size, 113629);
+    }
+
+    #[tokio::test]
+    async fn test_same_requests_simultaneously_disk() {
+        let tmp = tempfile::tempdir().unwrap();
+        let disk_base_path = tmp.path().to_owned();
+        let cache = Arc::new(MemDiskStoreCache::new(
+            LruReplacer::new(1024 * 512),
+            disk_base_path.to_str().unwrap().to_string(),
+            None,
+            None,
+        ));
+        let bucket = "tests-parquet".to_string();
+        let keys = vec!["userdata2.parquet".to_string()];
+        let remote_location = bucket.clone() + &keys[0];
+        let reader = MockS3Reader::new(bucket.clone(), keys.clone()).await;
+        let reader2 = MockS3Reader::new(bucket.clone(), keys.clone()).await;
+        let reader3 = MockS3Reader::new(bucket.clone(), keys).await;
+
+        let cache_1 = cache.clone();
+        let remote_location_1 = remote_location.clone();
+        let put_data_fut_1 = tokio::spawn(async move {
+            cache_1
+                .put_data_to_cache(remote_location_1, None, reader.into_stream().await.unwrap())
+                .await
+        });
+
+        let cache_2 = cache.clone();
+        let remote_location_2 = remote_location.clone();
+        let put_data_fut_2 = tokio::spawn(async move {
+            cache_2
+                .put_data_to_cache(
+                    remote_location_2,
+                    None,
+                    reader2.into_stream().await.unwrap(),
+                )
+                .await
+        });
+
+        let cache_3 = cache.clone();
+        let remote_location_3 = remote_location.clone();
+        let put_data_fut_3 = tokio::spawn(async move {
+            cache_3
+                .put_data_to_cache(
+                    remote_location_3,
+                    None,
+                    reader3.into_stream().await.unwrap(),
+                )
+                .await
+        });
+
+        let res = join!(put_data_fut_1, put_data_fut_2, put_data_fut_3);
+        assert!(res.0.is_ok());
+        assert!(res.1.is_ok());
+        assert!(res.2.is_ok());
+        assert_eq!(res.0.unwrap().unwrap(), 112193);
+        assert_eq!(res.1.unwrap().unwrap(), 112193);
+        assert_eq!(res.2.unwrap().unwrap(), 112193);
+    }
+
+    #[tokio::test]
+    async fn test_same_requests_simultaneously_mix() {
+        let tmp = tempfile::tempdir().unwrap();
+        let disk_base_path = tmp.path().to_owned();
+        let cache = Arc::new(MemDiskStoreCache::new(
+            LruReplacer::new(1024 * 512),
+            disk_base_path.to_str().unwrap().to_string(),
+            Some(LruReplacer::new(120000)),
+            Some(120000),
+        ));
+        let bucket = "tests-parquet".to_string();
+        let keys = vec!["userdata1.parquet".to_string()];
+        let keys2 = vec!["userdata2.parquet".to_string()];
+        let remote_location = bucket.clone() + &keys[0];
+        let remote_location2 = bucket.clone() + &keys2[0];
+        let reader = MockS3Reader::new(bucket.clone(), keys.clone()).await;
+        let reader2 = MockS3Reader::new(bucket.clone(), keys.clone()).await;
+        let reader3 = MockS3Reader::new(bucket.clone(), keys2).await;
+        let reader4 = MockS3Reader::new(bucket.clone(), keys).await;
+
+        let cache_1 = cache.clone();
+        let remote_location_1 = remote_location.clone();
+        let put_data_fut_1 = tokio::spawn(async move {
+            cache_1
+                .put_data_to_cache(remote_location_1, None, reader.into_stream().await.unwrap())
+                .await
+        });
+
+        let cache_2 = cache.clone();
+        let remote_location_2 = remote_location.clone();
+        let put_data_fut_2 = tokio::spawn(async move {
+            cache_2
+                .put_data_to_cache(
+                    remote_location_2,
+                    None,
+                    reader2.into_stream().await.unwrap(),
+                )
+                .await
+        });
+
+        let cache_3 = cache.clone();
+        let remote_location_3 = remote_location2.clone();
+        let put_data_fut_3 = tokio::spawn(async move {
+            cache_3
+                .put_data_to_cache(
+                    remote_location_3,
+                    None,
+                    reader3.into_stream().await.unwrap(),
+                )
+                .await
+        });
+
+        let cache_4 = cache.clone();
+        let remote_location_4 = remote_location.clone();
+        let put_data_fut_4 = tokio::spawn(async move {
+            cache_4
+                .put_data_to_cache(
+                    remote_location_4,
+                    None,
+                    reader4.into_stream().await.unwrap(),
+                )
+                .await
+        });
+
+        let res = join!(
+            put_data_fut_1,
+            put_data_fut_2,
+            put_data_fut_3,
+            put_data_fut_4
+        );
+        assert!(res.0.is_ok());
+        assert!(res.1.is_ok());
+        assert!(res.2.is_ok());
+        assert!(res.3.is_ok());
+        assert_eq!(res.0.unwrap().unwrap(), 113629);
+        assert_eq!(res.1.unwrap().unwrap(), 113629);
+        assert_eq!(res.2.unwrap().unwrap(), 112193);
+        assert_eq!(res.3.unwrap().unwrap(), 113629);
     }
 }

@@ -10,7 +10,8 @@ use super::ReplacerValue;
 /// objects. The replacer will start evicting if a new object comes that makes
 /// the replacer's size exceeds its max capacity, from the oldest to the newest.
 pub struct LruReplacer<K: ReplacerKey, V: ReplacerValue> {
-    cache_map: LinkedHashMap<K, V>,
+    // usize is pin count
+    cache_map: LinkedHashMap<K, (V, usize)>,
     max_capacity: usize,
     size: usize,
 }
@@ -28,7 +29,7 @@ impl<K: ReplacerKey, V: ReplacerValue> LruReplacer<K, V> {
         match self.cache_map.raw_entry_mut().from_key(key) {
             linked_hash_map::RawEntryMut::Occupied(mut entry) => {
                 entry.to_back();
-                Some(entry.into_mut())
+                Some(&entry.into_mut().0)
             }
             linked_hash_map::RawEntryMut::Vacant(_) => None,
         }
@@ -50,23 +51,69 @@ impl<K: ReplacerKey, V: ReplacerValue> LruReplacer<K, V> {
         }
         if let Some(cache_value) = self.cache_map.get(&key) {
             // If the key already exists, update the replacer size.
-            self.size -= cache_value.size();
+            self.size -= cache_value.0.size();
         }
-        self.size += value.size();
-        self.cache_map.insert(key.clone(), value);
         let mut evicted_keys = Vec::new();
-        while self.size > self.max_capacity {
-            if let Some((key, cache_value)) = self.cache_map.pop_front() {
-                debug!("-------- Evicting Key: {:?} --------", key);
-                evicted_keys.push(key);
-                self.size -= cache_value.size();
+        let mut iter = self.cache_map.iter();
+        let mut current_size = self.size;
+        while (current_size + value.size()) > self.max_capacity {
+            match iter.next() {
+                Some((key, (value, pin_count))) => {
+                    if *pin_count > 0 {
+                        // If the key is pinned, we do not evict the key.
+                        continue;
+                    }
+                    evicted_keys.push(key.clone());
+                    current_size -= value.size();
+                }
+                None => {
+                    return None;
+                }
             }
         }
+
+        for key in &evicted_keys {
+            if let Some(cache_value) = self.cache_map.remove(key) {
+                debug!("-------- Evicting Key: {:?} --------", key);
+                self.size -= cache_value.0.size();
+            } else {
+                return None;
+            }
+        }
+
+        self.size += value.size();
+        self.cache_map.insert(key.clone(), (value, 0));
         Some(evicted_keys)
     }
 
+    fn pin_key(&mut self, key: &K, count: usize) -> bool {
+        match self.cache_map.get_mut(key) {
+            Some((_, pin_count)) => {
+                *pin_count += count;
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn unpin_key(&mut self, key: &K) -> bool {
+        match self.cache_map.get_mut(key) {
+            Some((_, pin_count)) => {
+                if *pin_count == 0 {
+                    return false;
+                }
+                *pin_count -= 1;
+                true
+            }
+            None => false,
+        }
+    }
+
     fn peek_value(&self, key: &K) -> Option<&V> {
-        self.cache_map.get(key)
+        match self.cache_map.get(key) {
+            Some((value, _)) => Some(value),
+            None => None,
+        }
     }
 }
 
@@ -77,6 +124,14 @@ impl<K: ReplacerKey, V: ReplacerValue> DataStoreReplacer<K, V> for LruReplacer<K
 
     fn put(&mut self, key: K, value: V) -> Option<Vec<K>> {
         self.put_value(key, value)
+    }
+
+    fn pin(&mut self, key: &K, count: usize) -> bool {
+        self.pin_key(key, count)
+    }
+
+    fn unpin(&mut self, key: &K) -> bool {
+        self.unpin_key(key)
     }
 
     fn peek(&self, key: &K) -> Option<&V> {
@@ -191,5 +246,35 @@ mod tests {
             Some(&("value3".to_string(), 3))
         );
         assert_eq!(replacer.get(&("key2".to_string())), None);
+    }
+
+    #[test]
+    fn test_evict_pinned_key() {
+        let mut replacer =
+            LruReplacer::<ParpulseTestReplacerKey, ParpulseTestReplacerValue>::new(10);
+        replacer.put("key1".to_string(), ("value1".to_string(), 9));
+        assert!(replacer.pin(&"key1".to_string(), 1));
+        assert!(replacer
+            .put("key2".to_string(), ("value2".to_string(), 2))
+            .is_none());
+        assert_eq!(replacer.size(), 9);
+        assert!(replacer.pin(&"key1".to_string(), 1));
+        assert!(replacer.unpin(&"key1".to_string()));
+        assert!(replacer
+            .put("key2".to_string(), ("value2".to_string(), 2))
+            .is_none());
+        assert!(replacer.unpin(&"key1".to_string()));
+        assert!(replacer
+            .put("key2".to_string(), ("value2".to_string(), 2))
+            .is_some());
+        assert_eq!(replacer.size(), 2);
+        assert!(replacer.pin(&"key2".to_string(), 1));
+        replacer.put("key3".to_string(), ("value3".to_string(), 8));
+        assert_eq!(replacer.size(), 10);
+        replacer.put("key4".to_string(), ("value4".to_string(), 7));
+        assert_eq!(replacer.size(), 9);
+        assert!(replacer.get(&"key2".to_string()).is_some());
+        assert!(replacer.get(&"key4".to_string()).is_some());
+        assert!(replacer.get(&"key3".to_string()).is_none());
     }
 }

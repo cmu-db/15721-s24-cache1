@@ -1,9 +1,15 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use bytes::Bytes;
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::{mpsc::Receiver, Mutex};
 
-use crate::error::ParpulseResult;
+use crate::{
+    cache::{
+        data_store_cache::memdisk::{MemDiskStoreReplacerKey, MemDiskStoreReplacerValue},
+        replacer::DataStoreReplacer,
+    },
+    error::ParpulseResult,
+};
 
 const DEFAULT_MEM_CHANNEL_BUFFER_SIZE: usize = 1024;
 
@@ -21,17 +27,27 @@ impl MemStore {
         }
     }
 
-    pub fn read_data(&self, key: &str) -> ParpulseResult<Option<Receiver<ParpulseResult<Bytes>>>> {
+    pub fn read_data<R>(
+        &self,
+        key: &str,
+        mem_replacer: Arc<Mutex<R>>,
+    ) -> ParpulseResult<Option<Receiver<ParpulseResult<Bytes>>>>
+    where
+        R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue> + 'static,
+    {
         let key_value = self.data.get(key);
         if key_value.is_none() {
             return Ok(None);
         }
         let data_vec = key_value.unwrap().0.clone();
         let (tx, rx) = tokio::sync::mpsc::channel(DEFAULT_MEM_CHANNEL_BUFFER_SIZE);
+        let key_str = key.to_string().clone();
         tokio::spawn(async move {
             for data in data_vec.iter() {
                 tx.send(Ok(data.clone())).await.unwrap();
             }
+            // TODO(lanlou): when second read, so there is no need to unpin, how to improve?
+            mem_replacer.lock().await.unpin(&key_str);
         });
         Ok(Some(rx))
     }
@@ -61,6 +77,8 @@ impl MemStore {
 
 #[cfg(test)]
 mod tests {
+    use crate::cache::replacer::lru::LruReplacer;
+
     use super::*;
 
     #[test]
@@ -90,7 +108,8 @@ mod tests {
         assert_eq!(res3.as_ref().unwrap().0[1], bytes2_cp);
         assert_eq!(res3.as_ref().unwrap().0[2], bytes3_cp);
 
-        let read_res = mem_store.read_data(key.as_str());
+        let dummy_replacer = Arc::new(Mutex::new(LruReplacer::new(0)));
+        let read_res = mem_store.read_data(key.as_str(), dummy_replacer);
         assert!(read_res.is_ok());
         assert!(read_res.unwrap().is_none());
     }
@@ -104,7 +123,8 @@ mod tests {
         let bytes_cp = bytes.clone();
         let res = mem_store.write_data(key.clone(), bytes);
         assert!(res.is_none());
-        let read_res = mem_store.read_data(key.as_str());
+        let dummy_replacer = Arc::new(Mutex::new(LruReplacer::new(0)));
+        let read_res = mem_store.read_data(key.as_str(), dummy_replacer);
         assert!(read_res.is_ok());
         let mut rx = read_res.unwrap().unwrap();
         let mut bytes_vec = Vec::new();
