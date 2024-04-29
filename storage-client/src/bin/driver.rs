@@ -1,7 +1,8 @@
-use arrow_array::Float64Array;
+use arrow::array::Float64Array;
+use istziio_client::client_api::{StorageClient, StorageRequest};
 use log::info;
 use std::time::Instant;
-use storage_client::{client::StorageClientImpl, StorageClient, StorageRequest};
+use storage_client::client::StorageClientImpl;
 use storage_common::init_logger;
 
 /// This test is for benchmarking.
