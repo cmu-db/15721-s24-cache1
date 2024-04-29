@@ -18,7 +18,7 @@ use tokio::sync::mpsc::{channel, Receiver};
 use istziio_client::client_api::{StorageClient, StorageRequest, TableId};
 
 /// The batch size for the record batch.
-const BATCH_SIZE: usize = 100;
+const BATCH_SIZE: usize = 1024;
 const CHANNEL_CAPACITY: usize = 32;
 const PARAM_BUCKET_KEY: &str = "bucket";
 const PARAM_KEYS_KEY: &str = "keys";
