@@ -3,8 +3,11 @@ use crate::{
     error::ParpulseResult,
     storage_reader::{s3::S3Reader, s3_diskmock::MockS3Reader, AsyncStorageReader},
 };
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use bytes::Bytes;
+use log::debug;
 use storage_common::RequestParams;
 use tokio::sync::mpsc::Receiver;
 
@@ -16,12 +19,18 @@ use tokio::sync::mpsc::Receiver;
 
 pub struct StorageManager<C: DataStoreCache> {
     /// We don't use lock here because `data_store_cache` itself should handle the concurrency.
-    data_store_cache: C,
+    data_store_caches: Vec<C>,
+}
+
+fn calculate_hash<T: Hash>(t: &T) -> u64 {
+    let mut s = DefaultHasher::new();
+    t.hash(&mut s);
+    s.finish()
 }
 
 impl<C: DataStoreCache> StorageManager<C> {
-    pub fn new(data_store_cache: C) -> Self {
-        Self { data_store_cache }
+    pub fn new(data_store_caches: Vec<C>) -> Self {
+        Self { data_store_caches }
     }
 
     pub async fn get_data(
@@ -43,8 +52,15 @@ impl<C: DataStoreCache> StorageManager<C> {
         // FIXME: Cache key should be <bucket + key>. Might refactor the underlying S3
         // reader as one S3 key for one reader.
         let cache_key = format!("{}-{}", bucket, keys.join(","));
-        let data_rx = self
-            .data_store_cache
+        let cache_index = calculate_hash(&cache_key) as usize % self.data_store_caches.len();
+        let data_store_cache = self.data_store_caches.get(cache_index).unwrap();
+
+        debug!(
+            "For cache key: {}, the corresponding data_store_cache index {}",
+            cache_key, cache_index
+        );
+
+        let data_rx = data_store_cache
             .get_data_from_cache(cache_key.clone())
             .await?;
         if let Some(data_rx) = data_rx {
@@ -67,12 +83,11 @@ impl<C: DataStoreCache> StorageManager<C> {
                 };
                 (reader.into_stream().await?, data_size)
             };
-            self.data_store_cache
+            data_store_cache
                 .put_data_to_cache(cache_key.clone(), data_size, stream)
                 .await?;
             // TODO (kunle): Push down the response writer rather than calling get_data_from_cache again.
-            let data_rx = self
-                .data_store_cache
+            let data_rx = data_store_cache
                 .get_data_from_cache(cache_key.clone())
                 .await?;
             if data_rx.is_none() {
@@ -123,7 +138,7 @@ mod tests {
 
         let data_store_cache =
             MemDiskStoreCache::new(cache, cache_base_path.display().to_string(), None, None);
-        let storage_manager = StorageManager::new(data_store_cache);
+        let storage_manager = StorageManager::new(vec![data_store_cache]);
 
         let bucket = "tests-parquet".to_string();
         let keys = vec!["userdata1.parquet".to_string()];
@@ -179,7 +194,7 @@ mod tests {
             Some(mem_cache),
             Some(950),
         );
-        let storage_manager = StorageManager::new(data_store_cache);
+        let storage_manager = StorageManager::new(vec![data_store_cache]);
 
         let request_path_small_bucket = "tests-text".to_string();
         let request_path_small_keys = vec!["what-can-i-hold-you-with".to_string()];
@@ -238,7 +253,7 @@ mod tests {
             Some(mem_cache),
             Some(120000),
         );
-        let storage_manager = StorageManager::new(data_store_cache);
+        let storage_manager = StorageManager::new(vec![data_store_cache]);
 
         let request_path_bucket1 = "tests-parquet".to_string();
         let request_path_keys1 = vec!["userdata1.parquet".to_string()];
@@ -289,7 +304,7 @@ mod tests {
             None,
             None,
         );
-        let storage_manager = Arc::new(StorageManager::new(data_store_cache));
+        let storage_manager = Arc::new(StorageManager::new(vec![data_store_cache]));
 
         let request_path_bucket1 = "tests-parquet".to_string();
         let request_path_keys1 = vec!["userdata1.parquet".to_string()];
@@ -349,7 +364,7 @@ mod tests {
             Some(mem_cache),
             Some(120000),
         );
-        let storage_manager = Arc::new(StorageManager::new(data_store_cache));
+        let storage_manager = Arc::new(StorageManager::new(vec![data_store_cache]));
 
         let request_path_bucket1 = "tests-parquet".to_string();
         let request_path_keys1 = vec!["userdata2.parquet".to_string()];
@@ -458,5 +473,54 @@ mod tests {
             delta_time_miss, delta_time_hit
         );
         assert!(delta_time_miss > delta_time_hit);
+    }
+
+    #[tokio::test]
+    async fn test_fanout_cache() {
+        let disk_cache = LruReplacer::new(1000000);
+        let mem_cache = LruReplacer::new(120000);
+
+        let tmp = tempfile::tempdir().unwrap();
+        let disk_cache_base_path = tmp.path().to_owned();
+
+        let data_store_cache = MemDiskStoreCache::new(
+            disk_cache,
+            disk_cache_base_path.display().to_string(),
+            Some(mem_cache),
+            Some(120000),
+        );
+
+        let disk_cache2 = LruReplacer::new(1000000);
+        let mem_cache2 = LruReplacer::new(120000);
+
+        let tmp = tempfile::tempdir().unwrap();
+        let disk_cache_base_path = tmp.path().to_owned();
+
+        let data_store_cache2 = MemDiskStoreCache::new(
+            disk_cache2,
+            disk_cache_base_path.display().to_string(),
+            Some(mem_cache2),
+            Some(120000),
+        );
+        let storage_manager = Arc::new(StorageManager::new(vec![
+            data_store_cache,
+            data_store_cache2,
+        ]));
+
+        let request_path_bucket1 = "tests-parquet".to_string();
+        let request_path_keys1 = vec!["userdata1.parquet".to_string()];
+        let request_data1 = RequestParams::MockS3((request_path_bucket1, request_path_keys1));
+
+        let result = storage_manager.get_data(request_data1.clone(), true).await;
+        assert!(result.is_ok());
+        assert_eq!(consume_receiver(result.unwrap()).await, 113629);
+
+        let request_path_bucket2 = "tests-text".to_string();
+        let request_path_keys2 = vec!["what-can-i-hold-you-with".to_string()];
+        let request_data2 = RequestParams::MockS3((request_path_bucket2, request_path_keys2));
+
+        let result = storage_manager.get_data(request_data2.clone(), true).await;
+        assert!(result.is_ok());
+        assert_eq!(consume_receiver(result.unwrap()).await, 930);
     }
 }
