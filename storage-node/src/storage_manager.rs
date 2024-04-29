@@ -21,12 +21,6 @@ pub struct StorageManager<C: DataStoreCache> {
     data_store_caches: Vec<C>,
 }
 
-// fn calculate_hash<T: Hash>(t: &T) -> u64 {
-//     let mut s = DefaultHasher::new();
-//     t.hash(&mut s);
-//     s.finish()
-// }
-
 impl<C: DataStoreCache> StorageManager<C> {
     pub fn new(data_store_caches: Vec<C>) -> Self {
         Self { data_store_caches }
