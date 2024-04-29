@@ -80,18 +80,12 @@ pub struct S3ReaderStream {
 impl S3ReaderStream {
     pub fn new(client: Client, bucket: String, keys: Vec<String>) -> Self {
         assert!(!keys.is_empty(), "keys should not be empty");
-        let fut = client
-            .get_object()
-            .bucket(&bucket)
-            .key(&keys[0])
-            .send()
-            .boxed();
         Self {
             client,
             bucket,
             keys,
             current_key: 0,
-            object_fut: Some(fut),
+            object_fut: None,
             object_body: None,
         }
     }
@@ -123,12 +117,11 @@ impl Stream for S3ReaderStream {
                 },
                 Poll::Pending => Poll::Pending,
             }
-        } else if self.current_key + 1 >= self.keys.len() {
+        } else if self.current_key >= self.keys.len() {
             // No more data to read in S3.
             Poll::Ready(None)
         } else {
             // There are more files to read in S3. Fetch the next object.
-            self.current_key += 1;
             let fut = self
                 .client
                 .get_object()
@@ -137,6 +130,7 @@ impl Stream for S3ReaderStream {
                 .send()
                 .boxed();
             self.object_fut = Some(fut);
+            self.current_key += 1;
             self.poll_next(cx)
         }
     }

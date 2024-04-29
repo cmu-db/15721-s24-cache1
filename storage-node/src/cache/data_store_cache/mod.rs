@@ -5,6 +5,7 @@ use tokio::sync::mpsc::Receiver;
 use crate::{error::ParpulseResult, storage_reader::StorageReaderStream};
 
 pub mod memdisk;
+pub mod sqlite;
 
 #[async_trait]
 pub trait DataStoreCache {
