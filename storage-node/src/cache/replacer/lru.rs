@@ -54,21 +54,33 @@ impl<K: ReplacerKey, V: ReplacerValue> LruReplacer<K, V> {
             self.size -= cache_value.0.size();
         }
         let mut evicted_keys = Vec::new();
-        while (self.size + value.size()) > self.max_capacity {
-            // Previous code guarantees that there is at least 1 element in the cache_map, so we
-            // can safely unwrap here.
-            if self.cache_map.front().unwrap().1 .1 > 0 {
-                // TODO(lanlou): Actually we should look next to evict, but for simplicity, just
-                // return None here, it is temporarily okay since we will not pin an element for
-                // long time now.
-                return None;
-            }
-            if let Some((key, cache_value)) = self.cache_map.pop_front() {
-                debug!("-------- Evicting Key: {:?} --------", key);
-                evicted_keys.push(key);
-                self.size -= cache_value.0.size();
+        let mut iter = self.cache_map.iter();
+        let mut current_size = self.size;
+        while (current_size + value.size()) > self.max_capacity {
+            match iter.next() {
+                Some((key, (value, pin_count))) => {
+                    if *pin_count > 0 {
+                        // If the key is pinned, we do not evict the key.
+                        continue;
+                    }
+                    evicted_keys.push(key.clone());
+                    current_size -= value.size();
+                }
+                None => {
+                    return None;
+                }
             }
         }
+
+        for key in &evicted_keys {
+            if let Some(cache_value) = self.cache_map.remove(key) {
+                debug!("-------- Evicting Key: {:?} --------", key);
+                self.size -= cache_value.0.size();
+            } else {
+                return None;
+            }
+        }
+
         self.size += value.size();
         self.cache_map.insert(key.clone(), (value, 0));
         Some(evicted_keys)
@@ -256,5 +268,13 @@ mod tests {
             .put("key2".to_string(), ("value2".to_string(), 2))
             .is_some());
         assert_eq!(replacer.size(), 2);
+        assert!(replacer.pin(&"key2".to_string(), 1));
+        replacer.put("key3".to_string(), ("value3".to_string(), 8));
+        assert_eq!(replacer.size(), 10);
+        replacer.put("key4".to_string(), ("value4".to_string(), 7));
+        assert_eq!(replacer.size(), 9);
+        assert!(replacer.get(&"key2".to_string()).is_some());
+        assert!(replacer.get(&"key4".to_string()).is_some());
+        assert!(replacer.get(&"key3".to_string()).is_none());
     }
 }
