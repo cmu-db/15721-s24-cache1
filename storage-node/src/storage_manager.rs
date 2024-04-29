@@ -1,10 +1,12 @@
 use crate::{
     cache::data_store_cache::DataStoreCache,
+    common::hash::calculate_hash_crc32fast,
     error::ParpulseResult,
     storage_reader::{s3::S3Reader, s3_diskmock::MockS3Reader, AsyncStorageReader},
 };
 
 use bytes::Bytes;
+use log::debug;
 use parpulse_client::RequestParams;
 use tokio::sync::mpsc::Receiver;
 
@@ -16,12 +18,18 @@ use tokio::sync::mpsc::Receiver;
 
 pub struct StorageManager<C: DataStoreCache> {
     /// We don't use lock here because `data_store_cache` itself should handle the concurrency.
-    data_store_cache: C,
+    data_store_caches: Vec<C>,
 }
 
+// fn calculate_hash<T: Hash>(t: &T) -> u64 {
+//     let mut s = DefaultHasher::new();
+//     t.hash(&mut s);
+//     s.finish()
+// }
+
 impl<C: DataStoreCache> StorageManager<C> {
-    pub fn new(data_store_cache: C) -> Self {
-        Self { data_store_cache }
+    pub fn new(data_store_caches: Vec<C>) -> Self {
+        Self { data_store_caches }
     }
 
     pub async fn get_data(
@@ -43,8 +51,16 @@ impl<C: DataStoreCache> StorageManager<C> {
         // FIXME: Cache key should be <bucket + key>. Might refactor the underlying S3
         // reader as one S3 key for one reader.
         let cache_key = format!("{}-{}", bucket, keys.join(","));
-        let data_rx = self
-            .data_store_cache
+        let hash = calculate_hash_crc32fast(cache_key.as_bytes());
+        let cache_index = hash % self.data_store_caches.len();
+        let data_store_cache = self.data_store_caches.get(cache_index).unwrap();
+
+        debug!(
+            "For cache key: {}, the corresponding data_store_cache index {}",
+            cache_key, cache_index
+        );
+
+        let data_rx = data_store_cache
             .get_data_from_cache(cache_key.clone())
             .await?;
         if let Some(data_rx) = data_rx {
@@ -67,12 +83,11 @@ impl<C: DataStoreCache> StorageManager<C> {
                 };
                 (reader.into_stream().await?, data_size)
             };
-            self.data_store_cache
+            data_store_cache
                 .put_data_to_cache(cache_key.clone(), data_size, stream)
                 .await?;
             // TODO (kunle): Push down the response writer rather than calling get_data_from_cache again.
-            let data_rx = self
-                .data_store_cache
+            let data_rx = data_store_cache
                 .get_data_from_cache(cache_key.clone())
                 .await?;
             if data_rx.is_none() {
@@ -123,7 +138,7 @@ mod tests {
 
         let data_store_cache =
             MemDiskStoreCache::new(cache, cache_base_path.display().to_string(), None, None);
-        let storage_manager = StorageManager::new(data_store_cache);
+        let storage_manager = StorageManager::new(vec![data_store_cache]);
 
         let bucket = "tests-parquet".to_string();
         let keys = vec!["userdata1.parquet".to_string()];
@@ -179,7 +194,7 @@ mod tests {
             Some(mem_cache),
             Some(950),
         );
-        let storage_manager = StorageManager::new(data_store_cache);
+        let storage_manager = StorageManager::new(vec![data_store_cache]);
 
         let request_path_small_bucket = "tests-text".to_string();
         let request_path_small_keys = vec!["what-can-i-hold-you-with".to_string()];
@@ -238,7 +253,7 @@ mod tests {
             Some(mem_cache),
             Some(120000),
         );
-        let storage_manager = StorageManager::new(data_store_cache);
+        let storage_manager = StorageManager::new(vec![data_store_cache]);
 
         let request_path_bucket1 = "tests-parquet".to_string();
         let request_path_keys1 = vec!["userdata1.parquet".to_string()];
@@ -289,7 +304,7 @@ mod tests {
             None,
             None,
         );
-        let storage_manager = Arc::new(StorageManager::new(data_store_cache));
+        let storage_manager = Arc::new(StorageManager::new(vec![data_store_cache]));
 
         let request_path_bucket1 = "tests-parquet".to_string();
         let request_path_keys1 = vec!["userdata1.parquet".to_string()];
@@ -349,7 +364,7 @@ mod tests {
             Some(mem_cache),
             Some(120000),
         );
-        let storage_manager = Arc::new(StorageManager::new(data_store_cache));
+        let storage_manager = Arc::new(StorageManager::new(vec![data_store_cache]));
 
         let request_path_bucket1 = "tests-parquet".to_string();
         let request_path_keys1 = vec!["userdata2.parquet".to_string()];
@@ -458,5 +473,148 @@ mod tests {
             delta_time_miss, delta_time_hit
         );
         assert!(delta_time_miss > delta_time_hit);
+    }
+
+    #[tokio::test]
+    async fn test_fanout_cache() {
+        let data_store_cache_num = 6;
+        let mut data_store_caches = Vec::new();
+        for _ in 0..data_store_cache_num {
+            let disk_cache = LruReplacer::new(1000000);
+            let mem_cache = LruReplacer::new(120000);
+
+            let tmp = tempfile::tempdir().unwrap();
+            let disk_cache_base_path = tmp.path().to_owned();
+
+            let data_store_cache = MemDiskStoreCache::new(
+                disk_cache,
+                disk_cache_base_path.display().to_string(),
+                Some(mem_cache),
+                Some(120000),
+            );
+            data_store_caches.push(data_store_cache);
+        }
+        let storage_manager = Arc::new(StorageManager::new(data_store_caches));
+
+        let request_path_bucket1 = "tests-parquet".to_string();
+        let request_path_keys1 = vec!["userdata1.parquet".to_string()];
+        let request_data1 = RequestParams::MockS3((request_path_bucket1, request_path_keys1));
+
+        let result = storage_manager.get_data(request_data1.clone(), true).await;
+        assert!(result.is_ok());
+        assert_eq!(consume_receiver(result.unwrap()).await, 113629);
+        let request_path_bucket2 = "tests-parquet".to_string();
+        let request_path_keys2 = vec!["userdata2.parquet".to_string()];
+        let request_data2 = RequestParams::MockS3((request_path_bucket2, request_path_keys2));
+        let result = storage_manager.get_data(request_data2.clone(), true).await;
+        assert!(result.is_ok());
+        assert_eq!(consume_receiver(result.unwrap()).await, 112193);
+
+        let request_path_bucket3 = "tests-text".to_string();
+        let request_path_keys3: Vec<String> = vec!["what-can-i-hold-you-with".to_string()];
+        let request_data3 = RequestParams::MockS3((request_path_bucket3, request_path_keys3));
+        let result = storage_manager.get_data(request_data3.clone(), true).await;
+        assert!(result.is_ok());
+        assert_eq!(consume_receiver(result.unwrap()).await, 930);
+
+        let request_path_bucket4 = "tests-parquet".to_string();
+        let request_path_keys4: Vec<String> = vec!["small_random_data.parquet".to_string()];
+        let request_data4 = RequestParams::MockS3((request_path_bucket4, request_path_keys4));
+        let result = storage_manager.get_data(request_data4.clone(), true).await;
+        assert!(result.is_ok());
+        assert_eq!(consume_receiver(result.unwrap()).await, 2013);
+    }
+
+    #[tokio::test]
+    async fn test_fanout_cach_parallel() {
+        let data_store_cache_num = 6;
+        let mut data_store_caches = Vec::new();
+        for _ in 0..data_store_cache_num {
+            let disk_cache = LruReplacer::new(1000000);
+            let mem_cache = LruReplacer::new(120000);
+
+            let tmp = tempfile::tempdir().unwrap();
+            let disk_cache_base_path = tmp.path().to_owned();
+
+            let data_store_cache = MemDiskStoreCache::new(
+                disk_cache,
+                disk_cache_base_path.display().to_string(),
+                Some(mem_cache),
+                Some(120000),
+            );
+            data_store_caches.push(data_store_cache);
+        }
+        let storage_manager = Arc::new(StorageManager::new(data_store_caches));
+
+        let request_path_bucket1 = "tests-parquet".to_string();
+        let request_path_keys1 = vec!["userdata2.parquet".to_string()];
+        let request_data1 = RequestParams::MockS3((request_path_bucket1, request_path_keys1));
+
+        let request_path_bucket2 = "tests-parquet".to_string();
+        let request_path_keys2 = vec!["userdata1.parquet".to_string()];
+        let request_data2 = RequestParams::MockS3((request_path_bucket2, request_path_keys2));
+
+        let request_path_bucket3 = "tests-text".to_string();
+        let request_path_keys3 = vec!["what-can-i-hold-you-with".to_string()];
+        let request_data3 = RequestParams::MockS3((request_path_bucket3, request_path_keys3));
+
+        let storage_manager_1 = storage_manager.clone();
+        let request_data1_1 = request_data1.clone();
+        let get_data_fut_1 =
+            tokio::spawn(async move { storage_manager_1.get_data(request_data1_1, true).await });
+
+        let storage_manager_2 = storage_manager.clone();
+        let request_data1_2 = request_data1.clone();
+        let get_data_fut_2 =
+            tokio::spawn(async move { storage_manager_2.get_data(request_data1_2, true).await });
+
+        let storage_manager_3 = storage_manager.clone();
+        let request_data3_3 = request_data3.clone();
+        let get_data_fut_3 =
+            tokio::spawn(async move { storage_manager_3.get_data(request_data3_3, true).await });
+
+        let storage_manager_4 = storage_manager.clone();
+        let request_data2_4 = request_data2.clone();
+        let get_data_fut_4 =
+            tokio::spawn(async move { storage_manager_4.get_data(request_data2_4, true).await });
+
+        let storage_manager_5 = storage_manager.clone();
+        let request_data2_5 = request_data2.clone();
+        let get_data_fut_5 =
+            tokio::spawn(async move { storage_manager_5.get_data(request_data2_5, true).await });
+
+        let storage_manager_6 = storage_manager.clone();
+        let request_data1_6 = request_data1.clone();
+        let get_data_fut_6 =
+            tokio::spawn(async move { storage_manager_6.get_data(request_data1_6, true).await });
+
+        let storage_manager_7 = storage_manager.clone();
+        let request_data3_7 = request_data3.clone();
+        let get_data_fut_7 =
+            tokio::spawn(async move { storage_manager_7.get_data(request_data3_7, true).await });
+
+        let result = join!(
+            get_data_fut_1,
+            get_data_fut_2,
+            get_data_fut_3,
+            get_data_fut_4,
+            get_data_fut_5,
+            get_data_fut_6,
+            get_data_fut_7
+        );
+        assert!(result.0.is_ok());
+        assert_eq!(consume_receiver(result.0.unwrap().unwrap()).await, 112193);
+        assert!(result.1.is_ok());
+        assert_eq!(consume_receiver(result.1.unwrap().unwrap()).await, 112193);
+        assert!(result.2.is_ok());
+        assert_eq!(consume_receiver(result.2.unwrap().unwrap()).await, 930);
+        assert!(result.3.is_ok());
+        assert_eq!(consume_receiver(result.3.unwrap().unwrap()).await, 113629);
+        assert!(result.4.is_ok());
+        assert_eq!(consume_receiver(result.4.unwrap().unwrap()).await, 113629);
+        assert!(result.5.is_ok());
+        assert_eq!(consume_receiver(result.5.unwrap().unwrap()).await, 112193);
+        assert!(result.6.is_ok());
+        assert_eq!(consume_receiver(result.6.unwrap().unwrap()).await, 930);
     }
 }
