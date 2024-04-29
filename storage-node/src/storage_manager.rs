@@ -5,7 +5,7 @@ use crate::{
 };
 
 use bytes::Bytes;
-use storage_common::RequestParams;
+use storage_client::RequestParams;
 use tokio::sync::mpsc::Receiver;
 
 /// [`StorageManager`] handles the request from the storage client.

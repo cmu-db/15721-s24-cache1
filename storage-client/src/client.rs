@@ -2,6 +2,7 @@ use anyhow::{anyhow, Ok, Result};
 use arrow::array::RecordBatch;
 use futures::stream::StreamExt;
 
+use crate::RequestParams;
 use hyper::Uri;
 use lazy_static::lazy_static;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
@@ -10,7 +11,6 @@ use reqwest::{Client, Response, Url};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
-use storage_common::RequestParams;
 use tempfile::tempdir;
 
 use tokio::sync::mpsc::{channel, Receiver};

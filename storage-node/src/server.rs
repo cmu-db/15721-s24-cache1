@@ -2,7 +2,7 @@ use futures::lock::Mutex;
 use log::{info, warn};
 use std::net::IpAddr;
 use std::sync::Arc;
-use storage_common::{RequestParams, S3Request};
+use storage_client::{RequestParams, S3Request};
 use tokio_stream::wrappers::ReceiverStream;
 use warp::{Filter, Rejection};
 

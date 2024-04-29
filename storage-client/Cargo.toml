@@ -8,7 +8,6 @@ anyhow = "1"
 hyper = "1"
 async-trait = "0.1"
 tokio = { version = "1", features = ["full", "rt-multi-thread"] }
-storage-common = { path = "../storage-common" }
 futures = "0.3"
 reqwest = { version = "0.12", features = ["stream"] }
 tempfile = "3.2"
@@ -18,3 +17,6 @@ mockito = "1.4.0"
 log = "0.4"
 istziio-client = "0.1"
 lazy_static = "1.4"
+enum-as-inner = "0.6"
+serde = { version = "1", features = ["derive"] }
+env_logger = "0.11"

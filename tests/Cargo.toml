@@ -6,9 +6,9 @@ edition = "2021"
 [dependencies]
 storage-node = { path = "../storage-node" }
 storage-client = { path = "../storage-client" }
-storage-common = { path = "../storage-common" }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 arrow = "50.0.0"
 serial_test = "0.4"
 log = "0.4"
 istziio-client = "0.1"
+env_logger = "0.11"
