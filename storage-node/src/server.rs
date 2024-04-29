@@ -1,7 +1,8 @@
 use log::{info, warn};
 use parpulse_client::{RequestParams, S3Request};
-use std::net::IpAddr;
+use std::fs;
 use std::sync::Arc;
+use std::{net::IpAddr, process::exit};
 use tokio_stream::wrappers::ReceiverStream;
 use warp::{Filter, Rejection};
 
@@ -38,6 +39,18 @@ pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> 
     let is_mem_disk_cache = true;
     // TODO: try to use more fine-grained lock instead of locking the whole storage_manager
     let storage_manager = Arc::new(StorageManager::new(data_store_caches));
+
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.unwrap();
+        println!("Ctrl-C received, shutting down the server.");
+        for i in 0..DATA_STORE_CACHE_NUMBER {
+            if fs::metadata(i.to_string() + CACHE_BASE_PATH).is_ok() {
+                fs::remove_dir_all(i.to_string() + CACHE_BASE_PATH)
+                    .expect("remove cache files failed");
+            }
+        }
+        exit(0);
+    });
 
     let route = warp::path!("file")
         .and(warp::path::end())
