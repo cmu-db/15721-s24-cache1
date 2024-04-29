@@ -9,6 +9,8 @@ pub enum ParpulseError {
     S3(#[source] Box<dyn std::error::Error>),
     #[error("Internal error: {0}")]
     Internal(String),
+    #[error("SQLite error: {0}")]
+    Sqlite(#[source] rusqlite::Error),
 }
 
 impl From<std::io::Error> for ParpulseError {
@@ -30,6 +32,12 @@ where
 impl From<ByteStreamError> for ParpulseError {
     fn from(e: ByteStreamError) -> Self {
         ParpulseError::Internal(e.to_string())
+    }
+}
+
+impl From<rusqlite::Error> for ParpulseError {
+    fn from(e: rusqlite::Error) -> Self {
+        ParpulseError::Sqlite(e)
     }
 }
 

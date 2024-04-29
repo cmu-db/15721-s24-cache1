@@ -22,5 +22,6 @@ reqwest = "0.12"
 tempfile = "3.10.1"
 rand = "0.8"
 tokio-stream = "0.1"
+rusqlite = { version = "0.31", features = ["blob"] }
 log = "0.4"
 env_logger = "0.11"
