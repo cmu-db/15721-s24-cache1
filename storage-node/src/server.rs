@@ -12,17 +12,32 @@ use crate::{
 };
 
 const CACHE_BASE_PATH: &str = "cache/";
+const DATA_STORE_CACHE_NUMBER: usize = 6;
 
 pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> {
     // Should at least be able to store one 100MB file in the cache.
-    let dummy_size = 100 * 1024 * 1024;
     // TODO: Read the type of the cache from config.
-    let cache = LruReplacer::new(dummy_size);
-    // TODO: cache_base_path should be from config
-    let data_store_cache = MemDiskStoreCache::new(cache, CACHE_BASE_PATH.to_string(), None, None);
+    let dummy_size_per_disk_cache = 100 * 1024 * 1024;
+    let dummy_size_per_mem_cache = 100 * 1024;
+    let dummy_mem_max_file_cache = 10 * 1024;
+
+    let mut data_store_caches = Vec::new();
+
+    for i in 0..DATA_STORE_CACHE_NUMBER {
+        let disk_replacer = LruReplacer::new(dummy_size_per_disk_cache);
+        let mem_replace = LruReplacer::new(dummy_size_per_mem_cache);
+        let data_store_cache = MemDiskStoreCache::new(
+            disk_replacer,
+            i.to_string() + CACHE_BASE_PATH,
+            Some(mem_replace),
+            Some(dummy_mem_max_file_cache),
+        );
+        data_store_caches.push(data_store_cache);
+    }
+
     let is_mem_disk_cache = true;
     // TODO: try to use more fine-grained lock instead of locking the whole storage_manager
-    let storage_manager = Arc::new(StorageManager::new(data_store_cache));
+    let storage_manager = Arc::new(StorageManager::new(data_store_caches));
 
     let route = warp::path!("file")
         .and(warp::path::end())
