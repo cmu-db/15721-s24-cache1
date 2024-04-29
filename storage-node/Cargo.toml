@@ -25,3 +25,4 @@ tokio-stream = "0.1"
 rusqlite = { version = "0.31", features = ["blob"] }
 log = "0.4"
 env_logger = "0.11"
+crc32fast = "1.4.0"

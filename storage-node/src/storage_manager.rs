@@ -1,10 +1,9 @@
 use crate::{
     cache::data_store_cache::DataStoreCache,
+    common::hash::calculate_hash_crc32fast,
     error::ParpulseResult,
     storage_reader::{s3::S3Reader, s3_diskmock::MockS3Reader, AsyncStorageReader},
 };
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 
 use bytes::Bytes;
 use log::debug;
@@ -22,11 +21,11 @@ pub struct StorageManager<C: DataStoreCache> {
     data_store_caches: Vec<C>,
 }
 
-fn calculate_hash<T: Hash>(t: &T) -> u64 {
-    let mut s = DefaultHasher::new();
-    t.hash(&mut s);
-    s.finish()
-}
+// fn calculate_hash<T: Hash>(t: &T) -> u64 {
+//     let mut s = DefaultHasher::new();
+//     t.hash(&mut s);
+//     s.finish()
+// }
 
 impl<C: DataStoreCache> StorageManager<C> {
     pub fn new(data_store_caches: Vec<C>) -> Self {
@@ -52,7 +51,8 @@ impl<C: DataStoreCache> StorageManager<C> {
         // FIXME: Cache key should be <bucket + key>. Might refactor the underlying S3
         // reader as one S3 key for one reader.
         let cache_key = format!("{}-{}", bucket, keys.join(","));
-        let cache_index = calculate_hash(&cache_key) as usize % self.data_store_caches.len();
+        let hash = calculate_hash_crc32fast(cache_key.as_bytes());
+        let cache_index = hash as usize % self.data_store_caches.len();
         let data_store_cache = self.data_store_caches.get(cache_index).unwrap();
 
         debug!(
@@ -477,35 +477,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_fanout_cache() {
-        let disk_cache = LruReplacer::new(1000000);
-        let mem_cache = LruReplacer::new(120000);
+        let data_store_cache_num = 6;
+        let mut data_store_caches = Vec::new();
+        for _ in 0..data_store_cache_num {
+            let disk_cache = LruReplacer::new(1000000);
+            let mem_cache = LruReplacer::new(120000);
 
-        let tmp = tempfile::tempdir().unwrap();
-        let disk_cache_base_path = tmp.path().to_owned();
+            let tmp = tempfile::tempdir().unwrap();
+            let disk_cache_base_path = tmp.path().to_owned();
 
-        let data_store_cache = MemDiskStoreCache::new(
-            disk_cache,
-            disk_cache_base_path.display().to_string(),
-            Some(mem_cache),
-            Some(120000),
-        );
-
-        let disk_cache2 = LruReplacer::new(1000000);
-        let mem_cache2 = LruReplacer::new(120000);
-
-        let tmp = tempfile::tempdir().unwrap();
-        let disk_cache_base_path = tmp.path().to_owned();
-
-        let data_store_cache2 = MemDiskStoreCache::new(
-            disk_cache2,
-            disk_cache_base_path.display().to_string(),
-            Some(mem_cache2),
-            Some(120000),
-        );
-        let storage_manager = Arc::new(StorageManager::new(vec![
-            data_store_cache,
-            data_store_cache2,
-        ]));
+            let data_store_cache = MemDiskStoreCache::new(
+                disk_cache,
+                disk_cache_base_path.display().to_string(),
+                Some(mem_cache),
+                Some(120000),
+            );
+            data_store_caches.push(data_store_cache);
+        }
+        let storage_manager = Arc::new(StorageManager::new(data_store_caches));
 
         let request_path_bucket1 = "tests-parquet".to_string();
         let request_path_keys1 = vec!["userdata1.parquet".to_string()];
@@ -514,13 +503,25 @@ mod tests {
         let result = storage_manager.get_data(request_data1.clone(), true).await;
         assert!(result.is_ok());
         assert_eq!(consume_receiver(result.unwrap()).await, 113629);
-
-        let request_path_bucket2 = "tests-text".to_string();
-        let request_path_keys2 = vec!["what-can-i-hold-you-with".to_string()];
+        let request_path_bucket2 = "tests-parquet".to_string();
+        let request_path_keys2 = vec!["userdata2.parquet".to_string()];
         let request_data2 = RequestParams::MockS3((request_path_bucket2, request_path_keys2));
-
         let result = storage_manager.get_data(request_data2.clone(), true).await;
         assert!(result.is_ok());
+        assert_eq!(consume_receiver(result.unwrap()).await, 112193);
+
+        let request_path_bucket3 = "tests-text".to_string();
+        let request_path_keys3: Vec<String> = vec!["what-can-i-hold-you-with".to_string()];
+        let request_data3 = RequestParams::MockS3((request_path_bucket3, request_path_keys3));
+        let result = storage_manager.get_data(request_data3.clone(), true).await;
+        assert!(result.is_ok());
         assert_eq!(consume_receiver(result.unwrap()).await, 930);
+
+        let request_path_bucket4 = "tests-parquet".to_string();
+        let request_path_keys4: Vec<String> = vec!["small_random_data.parquet".to_string()];
+        let request_data4 = RequestParams::MockS3((request_path_bucket4, request_path_keys4));
+        let result = storage_manager.get_data(request_data4.clone(), true).await;
+        assert!(result.is_ok());
+        assert_eq!(consume_receiver(result.unwrap()).await, 2013);
     }
 }
