@@ -13,9 +13,11 @@ async fn main() {
         .is_test(true)
         .try_init();
 
-    let storage_client =
-        StorageClientImpl::new("http://44.220.220.131:3030", "http://127.0.0.1:3031")
-            .expect("Failed to create storage client.");
+    let server_endpoint =
+        std::env::var("SERVER_URL").unwrap_or(String::from("http://127.0.0.1:3030"));
+
+    let storage_client = StorageClientImpl::new(&server_endpoint, "http://127.0.0.1:3031")
+        .expect("Failed to create storage client.");
     let start_time = Instant::now();
     // Requesting random_data_100m_0.parquet
     let request = StorageRequest::Table(10);
