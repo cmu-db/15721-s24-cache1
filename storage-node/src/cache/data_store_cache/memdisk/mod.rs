@@ -347,14 +347,20 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
 
         // 3. If the data is successfully written to memory, directly return.
         if self.mem_store.is_some() && bytes_to_disk.is_none() {
-            let mut status_of_keys = self.status_of_keys.write().await;
-            let ((status, size), notify) = status_of_keys.get_mut(&remote_location).unwrap();
-            *status = Status::Completed;
-            *size = bytes_mem_written;
+            let notify;
             {
-                let mut mem_replacer = self.mem_replacer.as_ref().unwrap().lock().await;
-                mem_replacer.pin(&remote_location, *notify.1.lock().await);
+                let mut status_of_keys = self.status_of_keys.write().await;
+                let ((status, size), notify_ref) =
+                    status_of_keys.get_mut(&remote_location).unwrap();
+                *status = Status::Completed;
+                *size = bytes_mem_written;
+                {
+                    let mut mem_replacer = self.mem_replacer.as_ref().unwrap().lock().await;
+                    mem_replacer.pin(&remote_location, *notify_ref.1.lock().await);
+                }
+                notify = notify_ref.clone();
             }
+            // FIXME: status_of_keys write lock is released here, so the waken thread can immediately grab the lock
             notify.0.notify_waiters();
             return Ok(bytes_mem_written);
         }
@@ -394,15 +400,18 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             }
             disk_replacer.pin(&remote_location, 1);
         }
-        let mut status_of_keys = self.status_of_keys.write().await;
-        let ((status, size), notify) = status_of_keys.get_mut(&remote_location).unwrap();
-        *status = Status::Completed;
-        *size = data_size;
-        self.disk_replacer
-            .lock()
-            .await
-            .pin(&remote_location, *notify.1.lock().await);
-        // FIXME: disk_replacer lock should be released here
+        let notify;
+        {
+            let mut status_of_keys = self.status_of_keys.write().await;
+            let ((status, size), notify_ref) = status_of_keys.get_mut(&remote_location).unwrap();
+            *status = Status::Completed;
+            *size = data_size;
+            self.disk_replacer
+                .lock()
+                .await
+                .pin(&remote_location, *notify_ref.1.lock().await);
+            notify = notify_ref.clone();
+        }
         notify.0.notify_waiters();
         Ok(data_size)
     }
