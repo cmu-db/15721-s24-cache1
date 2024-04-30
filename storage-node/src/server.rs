@@ -1,20 +1,16 @@
 use log::{info, warn};
 use parpulse_client::{RequestParams, S3Request};
-use std::net::IpAddr;
 use std::sync::Arc;
+use std::{env::current_dir, net::IpAddr};
 use tokio_stream::wrappers::ReceiverStream;
 use warp::{Filter, Rejection};
 
 use crate::{
-    cache::{
-        data_store_cache::{memdisk::MemDiskStoreCache, sqlite::SqliteStoreCache},
-        replacer::lru::LruReplacer,
-    },
+    cache::{data_store_cache::sqlite::SqliteStoreCache, replacer::lru::LruReplacer},
     error::ParpulseResult,
     storage_manager::StorageManager,
 };
 
-const CACHE_BASE_PATH: &str = "cache/";
 const DATA_STORE_CACHE_NUMBER: usize = 6;
 
 pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> {
@@ -26,11 +22,12 @@ pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> 
 
     for i in 0..DATA_STORE_CACHE_NUMBER {
         let mem_replacer = LruReplacer::new(dummy_size_per_mem_cache);
-        let sqlite_data_cache = SqliteStoreCache::new(
-            mem_replacer,
-            CACHE_BASE_PATH.to_string() + &i.to_string(),
-            None,
-        )?;
+        let sqlite_base_path = current_dir()?
+            .join(i.to_string() + "cache.db3")
+            .to_str()
+            .unwrap()
+            .to_string();
+        let sqlite_data_cache = SqliteStoreCache::new(mem_replacer, sqlite_base_path, None)?;
         data_store_caches.push(sqlite_data_cache);
     }
 
