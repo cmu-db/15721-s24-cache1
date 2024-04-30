@@ -17,7 +17,7 @@ const DATA_STORE_CACHE_NUMBER: usize = 3;
 pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> {
     // Should at least be able to store one 100MB file in the cache.
     // TODO: Read the type of the cache from config.
-    let dummy_size_per_disk_cache = 1000 * 1024 * 1024;
+    let dummy_size_per_disk_cache = 1024 * 1024 * 1024;
     let dummy_size_per_mem_cache = 200 * 1024 * 1024;
     let dummy_mem_max_file_cache = 10 * 1024 * 1024 + 1;
 
