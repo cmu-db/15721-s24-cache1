@@ -1,7 +1,7 @@
 use log::{info, warn};
 use parpulse_client::{RequestParams, S3Request};
-use std::net::IpAddr;
 use std::sync::Arc;
+use std::{net::IpAddr, sync::Mutex};
 use tokio_stream::wrappers::ReceiverStream;
 use warp::{Filter, Rejection};
 
@@ -92,6 +92,20 @@ pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> 
             }
         });
 
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+    let tx = Arc::new(Mutex::new(Some(tx)));
+
+    let shutdown = warp::path!("shutdown").map({
+        let tx = Arc::clone(&tx); // Clone the Arc, not the sender.
+        move || {
+            let mut tx = tx.lock().unwrap();
+            if let Some(tx) = tx.take() {
+                tx.send(()).unwrap();
+            }
+            warp::http::StatusCode::OK
+        }
+    });
+
     let heartbeat = warp::path!("heartbeat").map(|| warp::http::StatusCode::OK);
 
     // Catch a request that does not match any of the routes above.
@@ -102,9 +116,17 @@ pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> 
             warp::http::StatusCode::NOT_FOUND
         });
 
-    let routes = route.or(heartbeat).or(catch_all);
+    let routes = route.or(heartbeat).or(shutdown).or(catch_all);
     let ip_addr: IpAddr = ip_addr.parse().unwrap();
-    warp::serve(routes).run((ip_addr, port)).await;
+    // warp::serve(routes).run((ip_addr, port)).await;
+
+    let process = tokio::spawn(async move {
+        warp::serve(routes).run((ip_addr, port)).await;
+    });
+
+    // Kill the process when the receiver receives a message.
+    rx.await.unwrap();
+    process.abort();
 
     Ok(())
 }
