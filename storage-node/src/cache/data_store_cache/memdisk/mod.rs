@@ -82,7 +82,8 @@ impl MemDiskStoreNotify {
 #[derive(Clone, PartialEq)]
 enum Status {
     Incompleted,
-    Completed,
+    MemCompleted,
+    DiskCompleted,
 }
 
 pub struct MemDiskStoreCache<
@@ -172,7 +173,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>>
                 }
             }
             notify = notify_ref.clone();
-            *status = Status::Completed;
+            *status = Status::MemCompleted;
         }
         // FIXME: status_of_keys write lock is released here, so the waken thread can immediately grab the lock
         notify.inner.notify_waiters();
@@ -183,7 +184,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>>
         {
             let mut status_of_keys = self.status_of_keys.write().await;
             let ((status, size), notify_ref) = status_of_keys.get_mut(key).unwrap();
-            *status = Status::Completed;
+            *status = Status::DiskCompleted;
             *size = bytes_disk_written;
             let notify_waiter = notify_ref.waiter_count.lock().await;
             if *notify_waiter > 0 {
@@ -264,47 +265,62 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
         _data_size: Option<usize>,
         mut data_stream: StorageReaderStream,
     ) -> ParpulseResult<usize> {
+        // If in_progress of remote_location thread fails, it will clean the data from this hash map.
         {
-            // If in_progress of remote_location thread fails, it will clean the data from this hash map.
-            let mut existed = false;
-            loop {
-                let status_of_keys = self.status_of_keys.read().await;
-                if let Some(((status, size), notify_ref)) = status_of_keys.get(&remote_location) {
-                    let notify;
-                    existed = true;
-                    match status {
-                        Status::Incompleted => {
-                            notify = notify_ref.clone();
-                            *notify_ref.waiter_count.lock().await += 1;
-                            // The Notified future is guaranteed to receive wakeups from notify_waiters()
-                            // as soon as it has been created, even if it has not yet been polled.
-                            let notified = notify.inner.notified();
-                            drop(status_of_keys);
-                            notified.await;
-                        }
-                        Status::Completed => {
+            let status_of_keys = self.status_of_keys.read().await;
+            if let Some(((status, size), notify_ref)) = status_of_keys.get(&remote_location) {
+                let notify;
+
+                match status {
+                    Status::Incompleted => {
+                        notify = notify_ref.clone();
+                        *notify_ref.waiter_count.lock().await += 1;
+                        // The Notified future is guaranteed to receive wakeups from notify_waiters()
+                        // as soon as it has been created, even if it has not yet been polled.
+                        let notified = notify.inner.notified();
+                        drop(status_of_keys);
+                        notified.await;
+                        if let Some(((status, size), _)) =
+                            self.status_of_keys.read().await.get(&remote_location)
+                        {
+                            assert!(
+                                *status == Status::MemCompleted || *status == Status::DiskCompleted
+                            );
                             return Ok(*size);
+                        } else {
+                            return Err(ParpulseError::Internal(
+                                "Put_data_to_cache fails".to_string(),
+                            ));
                         }
                     }
-                } else {
-                    // FIXME: status_of_keys lock should be released after break
-                    break;
+                    Status::MemCompleted => {
+                        // not be notified
+                        let mut mem_replacer = self.mem_replacer.as_ref().unwrap().lock().await;
+                        if mem_replacer.peek(&remote_location).is_some() {
+                            mem_replacer.pin(&remote_location, 1);
+                            return Ok(*size);
+                        }
+                        // If mem_replacer has no data, then update status_of_keys
+                    }
+                    Status::DiskCompleted => {
+                        let mut disk_replacer = self.disk_replacer.lock().await;
+                        if disk_replacer.peek(&remote_location).is_some() {
+                            disk_replacer.pin(&remote_location, 1);
+                            return Ok(*size);
+                        }
+                        // If disk_replacer has no data, then update status_of_keys
+                    }
                 }
             }
-            if existed {
-                // Another in progress of remote_location thread fails
-                return Err(ParpulseError::Internal(
-                    "Put_data_to_cache fails".to_string(),
-                ));
-            }
-            self.status_of_keys.write().await.insert(
-                remote_location.clone(),
-                (
-                    (Status::Incompleted, 0),
-                    Arc::new(MemDiskStoreNotify::new()),
-                ),
-            );
         }
+
+        self.status_of_keys.write().await.insert(
+            remote_location.clone(),
+            (
+                (Status::Incompleted, 0),
+                Arc::new(MemDiskStoreNotify::new()),
+            ),
+        );
 
         // TODO: Refine the lock.
         // TODO(lanlou): Also write the data to network.
@@ -373,13 +389,16 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                         drop(mem_replacer);
                         // Put the evicted keys to disk cache.
                         for evicted_key in evicted_keys {
-                            if let Some(((status, _), _)) = status_of_keys.get(&evicted_key.clone())
+                            if let Some(((status, _), _)) =
+                                status_of_keys.get_mut(&evicted_key.clone())
                             {
                                 // If the key is still in the status_of_keys, it means the data is still in progress.
                                 // We should not put the data to disk cache.
                                 if *status == Status::Incompleted {
                                     continue;
                                 }
+                                assert!(*status == Status::MemCompleted);
+                                *status = Status::DiskCompleted;
                             }
 
                             let (bytes_vec, data_size) =
