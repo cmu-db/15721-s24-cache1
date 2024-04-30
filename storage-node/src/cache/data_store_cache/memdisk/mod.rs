@@ -3,7 +3,7 @@ pub mod data_store;
 use std::{collections::HashMap, sync::Arc};
 
 use futures::stream::StreamExt;
-use log::warn;
+use log::{debug, warn};
 use tokio::sync::{Mutex, Notify, RwLock};
 
 use crate::{
@@ -31,8 +31,6 @@ pub const DEFAULT_MEM_CACHE_MAX_FILE_SIZE: usize = 1024 * 512;
 pub type MemDiskStoreReplacerKey = String;
 
 /// Status -> completed/incompleted; usize -> file_size
-/// Notify -> notify; usize -> notify_waiter_count
-/// FIXME: make (Notify, Mutex<usize>) a struct to make it more readable.
 type StatusKeyHashMap = HashMap<String, ((Status, usize), Arc<MemDiskStoreNotify>)>;
 
 pub struct MemDiskStoreReplacerValue {
@@ -79,7 +77,7 @@ impl MemDiskStoreNotify {
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 enum Status {
     Incompleted,
     MemCompleted,
@@ -94,9 +92,6 @@ pub struct MemDiskStoreCache<
     /// Cache_key = S3_PATH; Cache_value = (CACHE_BASE_PATH + S3_PATH, size)
     disk_replacer: Arc<Mutex<R>>,
     mem_replacer: Option<Arc<Mutex<R>>>,
-    // MemDiskStoreReplacerKey -> remote_location
-    // status: 0 -> incompleted; 1 -> completed; 2 -> failed
-    // TODO(lanlou): we should clean this hashmap.
     status_of_keys: RwLock<StatusKeyHashMap>,
 }
 
@@ -153,6 +148,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>>
             notify = status_of_keys.remove(key).unwrap().1;
         }
         notify.inner.notify_waiters();
+        debug!("Notify waiters error for key {}", key);
     }
 
     async fn notify_waiters_mem(&self, key: &String, bytes_mem_written: usize) {
@@ -160,20 +156,28 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>>
         {
             let mut status_of_keys = self.status_of_keys.write().await;
             let ((status, size), notify_ref) = status_of_keys.get_mut(key).unwrap();
+            *status = Status::MemCompleted;
+            debug!(
+                "Notify waiters disk for key {}: set status to MemCompleted",
+                key,
+            );
             *size = bytes_mem_written;
-            {
-                let notify_waiter = notify_ref.waiter_count.lock().await;
-                if *notify_waiter > 0 {
-                    self.mem_replacer
-                        .as_ref()
-                        .unwrap()
-                        .lock()
-                        .await
-                        .pin(key, *notify_waiter);
-                }
+            let notify_waiter = notify_ref.waiter_count.lock().await;
+            if *notify_waiter > 0 {
+                self.mem_replacer
+                    .as_ref()
+                    .unwrap()
+                    .lock()
+                    .await
+                    .pin(key, *notify_waiter);
+                debug!(
+                    "Notify waiters mem for key {}: pin with waiter count {}",
+                    key, *notify_waiter
+                );
+            } else {
+                debug!("Notify waiters mem for key {}: no waiter", key);
             }
             notify = notify_ref.clone();
-            *status = Status::MemCompleted;
         }
         // FIXME: status_of_keys write lock is released here, so the waken thread can immediately grab the lock
         notify.inner.notify_waiters();
@@ -185,10 +189,20 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>>
             let mut status_of_keys = self.status_of_keys.write().await;
             let ((status, size), notify_ref) = status_of_keys.get_mut(key).unwrap();
             *status = Status::DiskCompleted;
+            debug!(
+                "Notify waiters disk for key {}: set status to DiskCompleted",
+                key,
+            );
             *size = bytes_disk_written;
             let notify_waiter = notify_ref.waiter_count.lock().await;
             if *notify_waiter > 0 {
                 self.disk_replacer.lock().await.pin(key, *notify_waiter);
+                debug!(
+                    "Notify waiters disk for key {}: pin with waiter count {}",
+                    key, *notify_waiter
+                );
+            } else {
+                debug!("Notify waiters disk for key {}: no waiter", key);
             }
             notify = notify_ref.clone();
         }
@@ -220,6 +234,10 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                     .read_data(&data_store_key, self.mem_replacer.as_ref().unwrap().clone())
                 {
                     Ok(Some(rx)) => {
+                        debug!(
+                            "MemDiskStore get_data_from_cache: directly read data for {} in memory",
+                            remote_location
+                        );
                         return Ok(Some(rx));
                     }
                     Ok(None) => {
@@ -251,6 +269,10 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             )
             .await?
         {
+            debug!(
+                "MemDiskStore get_data_from_cache: directly read data for {} from disk",
+                remote_location
+            );
             Ok(Some(data))
         } else {
             return Err(ParpulseError::Internal(
@@ -273,6 +295,10 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
 
                 match status {
                     Status::Incompleted => {
+                        debug!(
+                            "MemDiskStore put_data_to_cache: find incompleted status for {}",
+                            remote_location
+                        );
                         notify = notify_ref.clone();
                         *notify_ref.waiter_count.lock().await += 1;
                         // The Notified future is guaranteed to receive wakeups from notify_waiters()
@@ -298,8 +324,11 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                         // and not be evicted. It is not wait and notified situation.
                         let mut mem_replacer = self.mem_replacer.as_ref().unwrap().lock().await;
                         if mem_replacer.peek(&remote_location).is_some() {
+                            debug!("MemDiskStore put_data_to_cache: find mem-completed status for {}, remote location already in mem replacer, pin + 1", remote_location);
                             mem_replacer.pin(&remote_location, 1);
                             return Ok(*size);
+                        } else {
+                            debug!("MemDiskStore put_data_to_cache:find mem-completed status for {}, no remote location in mem replacer", remote_location);
                         }
                         // If mem_replacer has no data, then update status_of_keys
                     }
@@ -308,8 +337,11 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                         // and not be evicted. It is not wait and notified situation.
                         let mut disk_replacer = self.disk_replacer.lock().await;
                         if disk_replacer.peek(&remote_location).is_some() {
+                            debug!("MemDiskStore put_data_to_cache: find disk-completed status for {}, remote location already in disk replacer, pin + 1", remote_location);
                             disk_replacer.pin(&remote_location, 1);
                             return Ok(*size);
+                        } else {
+                            debug!("MemDiskStore put_data_to_cache: find disk-completed status for {}, no remote location in disk replacer", remote_location);
                         }
                         // If disk_replacer has no data, then update status_of_keys
                     }
@@ -323,6 +355,10 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                 (Status::Incompleted, 0),
                 Arc::new(MemDiskStoreNotify::new()),
             ),
+        );
+        debug!(
+            "MemDiskStore put_data_to_cache: put incompleted status for {} into status_of_keys",
+            remote_location
         );
 
         // TODO: Refine the lock.
@@ -345,6 +381,10 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                         {
                             // If write_data returns something, it means the file size is too large
                             // to fit in the memory. We should put it to disk cache.
+                            debug!(
+                                "MemDiskStore put_data_to_cache: data size for {} not fit in memory, transfer data to disk",
+                                remote_location
+                            );
                             bytes_to_disk = Some(bytes_vec);
                             break;
                         }
@@ -367,9 +407,8 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                     remote_location.clone(),
                     MemDiskStoreReplacerValue::new(remote_location.clone(), bytes_mem_written),
                 );
-                // Insertion fails.
                 if replacer_put_status.is_none() {
-                    // Put the data to disk cache.
+                    // If inserting to memory fails, put the data to disk cache.
                     bytes_to_disk = Some(
                         mem_store
                             .write()
@@ -381,6 +420,10 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                 } else {
                     // TODO(lanlou): currently the pin/unpin relies on after putting, it will **always** get!
                     mem_replacer.pin(&remote_location, 1);
+                    debug!(
+                        "MemDiskStore put_data_to_cache: mem pin for {} + 1",
+                        remote_location
+                    );
                     // If successfully putting it into mem_replacer, we should record the evicted data,
                     // delete them from mem_store, and put all of them to disk cache.
                     if let Some(evicted_keys) = replacer_put_status {
@@ -398,10 +441,17 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                                 // If the key is still in the status_of_keys, it means the data is still in progress.
                                 // We should not put the data to disk cache.
                                 if *status == Status::Incompleted {
+                                    debug!(
+                                        "MemDiskStore put_data_to_cache: key {} still in progress, skip and not put to disk",
+                                        evicted_key
+                                    );
                                     continue;
                                 }
                                 assert!(*status == Status::MemCompleted);
                                 *status = Status::DiskCompleted;
+                                debug!(
+                                    "MemDiskStore put_data_to_cache: set status for key {} from MemCompleted to DiskCompleted",
+                                    evicted_key);
                             }
 
                             let (bytes_vec, data_size) =
@@ -427,7 +477,13 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                                     for evicted_key in evicted_keys {
                                         // FIXME: I think all status of the evicted_key removed here should be
                                         // `Completed`?
-                                        status_of_keys.remove(&evicted_key);
+                                        let removed_status = status_of_keys.remove(&evicted_key);
+                                        if let Some(((status, _), _)) = removed_status {
+                                            debug!(
+                                                "MemDiskStore put_data_to_cache: 1 remove status {:?} for key {}",
+                                                status,evicted_key
+                                            );
+                                        }
                                         self.disk_store
                                             .clean_data(
                                                 &self.disk_store.data_store_key(&evicted_key),
@@ -447,7 +503,13 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                                     // It is not main in-progress thread for evicted_key, and its status should be
                                     // `Completed`, so there is totally no need to notify the waiters.
                                     // FIXME: can we safely remove evicted_key here?
-                                    status_of_keys.remove(&evicted_key);
+                                    let removed_status = status_of_keys.remove(&evicted_key);
+                                    if let Some(((status, _), _)) = removed_status {
+                                        debug!(
+                                                "MemDiskStore put_data_to_cache: 2 remove status {:?} for key {}",
+                                                status,evicted_key
+                                            );
+                                    }
                                 }
                             }
                         }
@@ -484,7 +546,13 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                 Some(evicted_keys) => {
                     let mut status_of_keys = self.status_of_keys.write().await;
                     for evicted_key in evicted_keys {
-                        status_of_keys.remove(&evicted_key);
+                        let removed_status = status_of_keys.remove(&evicted_key);
+                        if let Some(((status, _), _)) = removed_status {
+                            debug!(
+                                "MemDiskStore put_data_to_cache: 3 remove status {:?} for key {}",
+                                status, evicted_key
+                            );
+                        }
                         self.disk_store
                             .clean_data(&self.disk_store.data_store_key(&evicted_key))
                             .await?;
@@ -505,6 +573,10 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                 }
             }
             disk_replacer.pin(&remote_location, 1);
+            debug!(
+                "MemDiskStore put_data_to_cache: disk pin for {} + 1",
+                remote_location
+            );
         }
         self.notify_waiters_disk(&remote_location, data_size).await;
         Ok(data_size)
