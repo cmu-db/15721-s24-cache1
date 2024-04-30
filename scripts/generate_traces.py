@@ -32,6 +32,7 @@ def generate_access_counts(num_files, s, num_accesses, file_size):
 def write_to_csv(access_counts, output_file):
     with open(output_file, "w") as f:
         writer = csv.writer(f)
+        writer.writerow(["timestamp", "file_index"])
         timestamp = 0  # timestamp is in milliseconds
         for file_index in access_counts:
             writer.writerow([timestamp, file_index])
@@ -41,11 +42,6 @@ def write_to_csv(access_counts, output_file):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Generate access counts with a Zipfian distribution")
-    parser.add_argument(
-        "--num_files",
-        type=int,
-        default=10,
-        help="Number of files (default: 10)")
     parser.add_argument(
         "-s",
         "--skew_param",
@@ -73,9 +69,13 @@ if __name__ == "__main__":
 
     if args.size not in mp:
         raise ValueError("Size should be either 1 or 100")
+    if args.size == 100:
+        num_files = 10
+    else:
+        num_files = 9
 
     access_counts = generate_access_counts(
-        args.num_files, args.skew_param, args.num_accesses, args.size)
+        num_files, args.skew_param, args.num_accesses, args.size)
     write_to_csv(access_counts, args.output_file)
 
     print("Access counts generated and written to", args.output_file)
