@@ -166,7 +166,7 @@ mod tests {
         ];
         let reader = MockS3Reader::new(bucket, keys).await;
         let bytes = reader.read_all().await.unwrap();
-        assert_eq!(bytes.len(), 113629 + 112193);
+        assert_eq!(bytes[0].len() + bytes[1].len(), 113629 + 112193);
     }
 
     #[tokio::test]

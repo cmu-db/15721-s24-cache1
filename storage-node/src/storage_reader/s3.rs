@@ -208,7 +208,7 @@ mod tests {
         let keys = vec!["userdata/userdata1.parquet".to_string()];
         let reader = S3Reader::new(bucket, keys).await;
         let bytes = reader.read_all().await.unwrap();
-        assert_eq!(bytes.len(), 113629);
+        assert_eq!(bytes[0].len(), 113629);
     }
 
     #[tokio::test]
