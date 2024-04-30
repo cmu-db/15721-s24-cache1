@@ -141,7 +141,7 @@ impl AsyncStorageReader for S3Reader {
     /// NEVER call this method if you do not know the size of the data -- collecting
     /// all data into one buffer might lead to OOM.
     async fn read_all(&self) -> ParpulseResult<Vec<Bytes>> {
-        let mut bytes_vec = Vec::new();
+        let mut bytes_vec = Vec::with_capacity(self.keys.len());
         for key in &self.keys {
             let object = self
                 .client

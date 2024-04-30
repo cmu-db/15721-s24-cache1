@@ -120,7 +120,7 @@ impl Stream for MockS3ReaderStream {
 #[async_trait]
 impl AsyncStorageReader for MockS3Reader {
     async fn read_all(&self) -> ParpulseResult<Vec<Bytes>> {
-        let mut bytes_vec = Vec::new();
+        let mut bytes_vec = Vec::with_capacity(self.file_paths.len());
         for file_path in &self.file_paths {
             let (_, data) = self.disk_manager.read_disk_all(file_path).await?;
             bytes_vec.push(data);
