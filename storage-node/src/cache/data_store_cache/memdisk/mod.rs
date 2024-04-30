@@ -294,7 +294,8 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                         }
                     }
                     Status::MemCompleted => {
-                        // not be notified
+                        // This code only applies to: a thread tries to `put_data_to_cache` but the data is already in cache
+                        // and not be evicted. It is not wait and notified situation.
                         let mut mem_replacer = self.mem_replacer.as_ref().unwrap().lock().await;
                         if mem_replacer.peek(&remote_location).is_some() {
                             mem_replacer.pin(&remote_location, 1);
@@ -303,6 +304,8 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                         // If mem_replacer has no data, then update status_of_keys
                     }
                     Status::DiskCompleted => {
+                        // This code only applies to: a thread tries to `put_data_to_cache` but the data is already in cache
+                        // and not be evicted. It is not wait and notified situation.
                         let mut disk_replacer = self.disk_replacer.lock().await;
                         if disk_replacer.peek(&remote_location).is_some() {
                             disk_replacer.pin(&remote_location, 1);
