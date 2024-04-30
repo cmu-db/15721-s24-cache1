@@ -22,11 +22,6 @@ use tokio::sync::mpsc::Receiver;
 
 use self::data_store::{disk::DiskStore, memory::MemStore};
 
-/// The default maximum single file size for the memory cache.
-/// If the file size exceeds this value, the file will be stored in the disk cache.
-/// TODO(lanlou): make this value configurable.
-pub const DEFAULT_MEM_CACHE_MAX_FILE_SIZE: usize = 1024 * 512;
-
 /// [`MemDiskStoreReplacerKey`] is a path to the remote object store.
 pub type MemDiskStoreReplacerKey = String;
 
@@ -113,8 +108,8 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>>
         let disk_store = DiskStore::new(disk_manager, disk_base_path);
 
         if mem_replacer.is_some() {
-            let mut mem_max_file_size =
-                mem_max_file_size.unwrap_or(DEFAULT_MEM_CACHE_MAX_FILE_SIZE);
+            debug_assert!(mem_max_file_size.is_some());
+            let mut mem_max_file_size = mem_max_file_size.unwrap();
             let replacer_max_capacity = mem_replacer.as_ref().unwrap().max_capacity();
             if mem_max_file_size > replacer_max_capacity {
                 warn!("The maximum file size > replacer's max capacity, so we set maximum file size = 1/5 of the maximum capacity.");

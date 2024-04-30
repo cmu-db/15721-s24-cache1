@@ -1,5 +1,5 @@
 use crate::{
-    cache::data_store_cache::DataStoreCache,
+    cache::{data_store_cache::DataStoreCache, replacer::ParpulseDataStoreReplacer},
     common::hash::calculate_hash_crc32fast,
     error::ParpulseResult,
     storage_reader::{s3::S3Reader, s3_diskmock::MockS3Reader, AsyncStorageReader},
@@ -16,13 +16,13 @@ use tokio::sync::mpsc::Receiver;
 /// which should be responsible for handling multiple requests at the
 /// same time.
 
-pub struct StorageManager<C: DataStoreCache> {
+pub struct StorageManager {
     /// We don't use lock here because `data_store_cache` itself should handle the concurrency.
-    data_store_caches: Vec<C>,
+    data_store_caches: Vec<ParpulseDataStoreReplacer>,
 }
 
-impl<C: DataStoreCache> StorageManager<C> {
-    pub fn new(data_store_caches: Vec<C>) -> Self {
+impl StorageManager {
+    pub fn new(data_store_caches: Vec<ParpulseDataStoreReplacer>) -> Self {
         Self { data_store_caches }
     }
 
