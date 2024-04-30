@@ -1,9 +1,9 @@
 pub mod data_store;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use futures::stream::StreamExt;
-use log::warn;
+use log::{info, warn};
 use tokio::sync::{Mutex, Notify, RwLock};
 
 use crate::{
@@ -140,7 +140,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
         &self,
         remote_location: String,
     ) -> ParpulseResult<Option<Receiver<ParpulseResult<Bytes>>>> {
-        // TODO: Refine the lock.
+        let start_time = Instant::now();
         if let Some(mem_store) = &self.mem_store {
             let mut data_store_key = None;
             {
@@ -156,6 +156,11 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                     .read_data(&data_store_key, self.mem_replacer.as_ref().unwrap().clone())
                 {
                     Ok(Some(rx)) => {
+                        info!(
+                            "Get data from memory cache for {} in {:?} ms",
+                            remote_location,
+                            start_time.elapsed()
+                        );
                         return Ok(Some(rx));
                     }
                     Ok(None) => {
@@ -183,6 +188,11 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             .read_data(&data_store_key, self.disk_replacer.clone())
             .await?
         {
+            info!(
+                "Get data from disk cache for {} in {:?} ms",
+                remote_location,
+                start_time.elapsed()
+            );
             Ok(Some(data))
         } else {
             return Err(ParpulseError::Internal(
@@ -197,6 +207,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
         _data_size: Option<usize>,
         mut data_stream: StorageReaderStream,
     ) -> ParpulseResult<usize> {
+        let start_time = Instant::now();
         {
             // If in_progress of remote_location thread fails, it will clean the data from this hash map.
             let mut existed = false;
@@ -216,6 +227,11 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                             notified.await;
                         }
                         Status::Completed => {
+                            info!(
+                                "Put data to cache for {} in {:?} ms, (notified by other thread)",
+                                remote_location,
+                                start_time.elapsed()
+                            );
                             return Ok(*size);
                         }
                     }
@@ -239,7 +255,6 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             );
         }
 
-        // TODO: Refine the lock.
         // TODO(lanlou): Also write the data to network.
         let mut bytes_to_disk = None;
         let mut bytes_mem_written = 0;
@@ -248,6 +263,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
         // 1. If the mem_store is enabled, first try to write the data to memory.
         // Note: Only file which size < mem_max_file_size can be written to memory.
         if let Some(mem_store) = &self.mem_store {
+            let start_time_mem_read = Instant::now();
             loop {
                 match data_stream.next().await {
                     Some(Ok(bytes)) => {
@@ -275,7 +291,16 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                 }
             }
 
+            info!(
+                "Try to store data into memory for {} in {:?} ms, store {} bytes, success: {}",
+                remote_location,
+                start_time_mem_read.elapsed(),
+                bytes_mem_written,
+                bytes_to_disk.is_none()
+            );
+
             if bytes_to_disk.is_none() {
+                let start_time_mem_update_replacer = Instant::now();
                 // If bytes_to_disk has nothing, it means the data has been successfully written to memory.
                 // We have to put it into mem_replacer too.
                 let mut mem_replacer = self.mem_replacer.as_ref().unwrap().lock().await;
@@ -311,12 +336,20 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                         evicted_bytes_to_disk = Some(evicted_bytes_to_disk_inner);
                     }
                 }
+                info!(
+                    "Update mem replacer for {} in {:?} ms",
+                    remote_location,
+                    start_time_mem_update_replacer.elapsed()
+                );
             }
         }
 
         // 2. If applicable, put all the evicted data into disk cache.
         // Don't need to write the data to network for evicted keys.
         if let Some(evicted_bytes_to_disk) = evicted_bytes_to_disk {
+            let start_time_put_evicted_bytes_to_disk = Instant::now();
+            let time_flag = !evicted_bytes_to_disk.is_empty();
+
             for (remote_location_evicted, (bytes_vec, data_size)) in evicted_bytes_to_disk {
                 assert_ne!(remote_location_evicted, remote_location);
                 let disk_store_key = self.disk_store.data_store_key(&remote_location_evicted);
@@ -343,10 +376,18 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                     );
                 }
             }
+            if time_flag {
+                info!(
+                    "Put evicted data to disk cache for {} in {:?} ms",
+                    remote_location,
+                    start_time_put_evicted_bytes_to_disk.elapsed()
+                );
+            }
         }
 
         // 3. If the data is successfully written to memory, directly return.
         if self.mem_store.is_some() && bytes_to_disk.is_none() {
+            let start_time_notify_waiters_mem = Instant::now();
             let notify;
             {
                 let mut status_of_keys = self.status_of_keys.write().await;
@@ -362,11 +403,22 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             }
             // FIXME: status_of_keys write lock is released here, so the waken thread can immediately grab the lock
             notify.0.notify_waiters();
+            info!(
+                "Notify all waiters after putting data to memory for key {} in {:?} ms",
+                remote_location,
+                start_time_notify_waiters_mem.elapsed()
+            );
+            info!(
+                "Put data to memory cache for {} in {:?} ms",
+                remote_location,
+                start_time.elapsed()
+            );
             return Ok(bytes_mem_written);
         }
 
         // 4. If the data is not written to memory_cache successfully, then cache it to disk.
         // Need to write the data to network for the current key.
+        let start_time_disk_write_data = Instant::now();
         let disk_store_key = self.disk_store.data_store_key(&remote_location);
         let data_size_wrap = self
             .disk_store
@@ -376,7 +428,13 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             self.status_of_keys.write().await.remove(&remote_location);
             return Err(e);
         }
+        info!(
+            "Write data to disk cache for {} in {:?} ms",
+            remote_location,
+            start_time_disk_write_data.elapsed()
+        );
         let data_size = data_size_wrap.unwrap();
+        let start_time_update_disk_replacer = Instant::now();
         {
             let mut disk_replacer = self.disk_replacer.lock().await;
             if disk_replacer
@@ -400,6 +458,12 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             }
             disk_replacer.pin(&remote_location, 1);
         }
+        info!(
+            "Update disk replacer for {} in {:?} ms",
+            remote_location,
+            start_time_update_disk_replacer.elapsed()
+        );
+        let start_time_notify_waiters_disk = Instant::now();
         let notify;
         {
             let mut status_of_keys = self.status_of_keys.write().await;
@@ -413,6 +477,16 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             notify = notify_ref.clone();
         }
         notify.0.notify_waiters();
+        info!(
+            "Notify all waiters after putting data to disk for key {} in {:?} ms",
+            remote_location,
+            start_time_notify_waiters_disk.elapsed()
+        );
+        info!(
+            "Put data to disk cache for {} in {:?} ms",
+            remote_location,
+            start_time.elapsed()
+        );
         Ok(data_size)
     }
 }
