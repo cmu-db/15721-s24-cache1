@@ -424,6 +424,7 @@ mod tests {
         storage_reader::{s3_diskmock::MockS3Reader, AsyncStorageReader},
     };
     use futures::join;
+    use parpulse_client::RequestParams;
 
     use super::*;
     #[tokio::test]
@@ -491,36 +492,16 @@ mod tests {
         );
         let bucket = "tests-parquet".to_string();
         let keys = vec!["userdata1.parquet".to_string()];
-        let remote_location = bucket.clone() + &keys[0];
-        let reader = MockS3Reader::new(bucket.clone(), keys).await;
-        let written_data_size = cache
-            .put_data_to_cache(
-                remote_location.clone(),
-                None,
-                reader.into_stream().await.unwrap(),
-            )
-            .await
-            .unwrap();
+        let request = RequestParams::MockS3((bucket, keys));
+        let written_data_size = cache.put_data_to_cache(&request).await.unwrap();
         assert_eq!(written_data_size, 113629);
 
         let keys = vec!["userdata2.parquet".to_string()];
-        let remote_location2 = bucket.clone() + &keys[0];
-        let reader = MockS3Reader::new(bucket, keys).await;
-        let mut written_data_size = cache
-            .put_data_to_cache(
-                remote_location2.clone(),
-                None,
-                reader.into_stream().await.unwrap(),
-            )
-            .await
-            .unwrap();
+        let request2 = RequestParams::MockS3((bucket, keys));
+        let mut written_data_size = cache.put_data_to_cache(&request2).await.unwrap();
         assert_eq!(written_data_size, 112193);
 
-        let mut rx = cache
-            .get_data_from_cache(remote_location)
-            .await
-            .unwrap()
-            .unwrap();
+        let mut rx = cache.get_data_from_cache(&request).await.unwrap().unwrap();
         written_data_size = 0;
         while let Some(data) = rx.recv().await {
             let data = data.unwrap();

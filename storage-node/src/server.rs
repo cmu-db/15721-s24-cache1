@@ -35,7 +35,6 @@ pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> 
         data_store_caches.push(data_store_cache);
     }
 
-    let is_mem_disk_cache = true;
     // TODO: try to use more fine-grained lock instead of locking the whole storage_manager
     let storage_manager = Arc::new(StorageManager::new(data_store_caches));
 
@@ -63,7 +62,7 @@ pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> 
                 } else {
                     RequestParams::S3((bucket, vec![keys]))
                 };
-                let result = storage_manager.get_data(request, is_mem_disk_cache).await;
+                let result = storage_manager.get_data(request).await;
                 match result {
                     Ok(data_rx) => {
                         let stream = ReceiverStream::new(data_rx);

@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::StreamExt;
 use log::warn;
+use parpulse_client::RequestParams;
 use rusqlite::{Connection, DatabaseName, OpenFlags};
 use tokio::sync::{
     mpsc::{channel, Receiver},
@@ -15,12 +16,12 @@ use tokio::sync::{
 use crate::{
     cache::replacer::{DataStoreReplacer, ReplacerValue},
     error::ParpulseResult,
-    storage_reader::StorageReaderStream,
+    storage_reader::{s3::S3Reader, s3_diskmock::MockS3Reader, AsyncStorageReader},
 };
 
 use self::blob::{SqliteBlob, SqliteBlobReader};
 
-use super::DataStoreCache;
+use super::{cache_key_from_request, DataStoreCache};
 
 const SQLITE_CACHE_TABLE_NAME: &str = "parpulse_cache";
 const SQLITE_CACHE_COLUMN_NAME: &str = "content";
@@ -104,8 +105,9 @@ impl<R: DataStoreReplacer<SqliteStoreReplacerKey, SqliteStoreReplacerValue>> Dat
 {
     async fn get_data_from_cache(
         &self,
-        remote_location: String,
+        request: &RequestParams,
     ) -> ParpulseResult<Option<Receiver<ParpulseResult<Bytes>>>> {
+        let remote_location = cache_key_from_request(request);
         let mut replacer = self.replacer.lock().await;
         if let Some(replacer_value) = replacer.get(&remote_location) {
             let (tx, rx) = channel(SQLITE_BLOB_CHANNEL_CAPACITY);
@@ -135,16 +137,24 @@ impl<R: DataStoreReplacer<SqliteStoreReplacerKey, SqliteStoreReplacerValue>> Dat
         }
     }
 
-    async fn put_data_to_cache(
-        &self,
-        remote_location: String,
-        data_size: Option<usize>,
-        mut data_stream: StorageReaderStream,
-    ) -> ParpulseResult<usize> {
+    async fn put_data_to_cache(&self, request: &RequestParams) -> ParpulseResult<usize> {
+        let remote_location = cache_key_from_request(request);
+        let (data_stream, blob_size) = {
+            match request {
+                RequestParams::S3((bucket, keys)) => {
+                    let reader = S3Reader::new(bucket.clone(), *keys).await;
+                    (reader.into_stream().await?, reader.get_object_size().await)
+                }
+                RequestParams::MockS3((bucket, keys)) => {
+                    let reader = MockS3Reader::new(bucket.clone(), *keys).await;
+                    (reader.into_stream().await?, reader.get_object_size().await)
+                }
+            }
+        };
+        let blob_size = blob_size.unwrap_or(SQLITE_MAX_BLOB_SIZE);
         let mut replacer = self.replacer.lock().await;
         let sqlite_base_path = self.sqlite_base_path.clone();
         let db = Connection::open(sqlite_base_path)?;
-        let blob_size = data_size.unwrap_or(SQLITE_MAX_BLOB_SIZE);
         let insert_blob_stmt = format!(
             "INSERT INTO {} ({}) VALUES (ZEROBLOB({}))",
             SQLITE_CACHE_TABLE_NAME, SQLITE_CACHE_COLUMN_NAME, blob_size
@@ -224,16 +234,17 @@ with uncertainty, with danger, with defeat.
 ",
         );
         let data_size = data1.len() + data2.len();
-        let remote_location = "what-can-i-hold-you-with.txt".to_string();
-        let data_stream = futures::stream::iter(vec![Ok(data1.clone()), Ok(data2.clone())]).boxed();
+        let bucket = "tests-text".to_string();
+        let keys = vec!["what-can-i-hold-you-with".to_string()];
+        let request = RequestParams::MockS3((bucket, keys));
         let bytes_written = cache
-            .put_data_to_cache(remote_location.clone(), Some(data_size), data_stream)
+            .put_data_to_cache(&request)
             .await
             .expect("put data to cache failed");
         assert_eq!(bytes_written, data1.len() + data2.len());
 
         let mut rx = cache
-            .get_data_from_cache(remote_location.clone())
+            .get_data_from_cache(&request)
             .await
             .expect("get data from cache failed")
             .expect("data not found in cache");
