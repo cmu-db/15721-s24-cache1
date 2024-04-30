@@ -1,6 +1,7 @@
 use std::{
     pin::Pin,
     task::{Context, Poll},
+    time::{Duration, Instant},
 };
 
 use async_trait::async_trait;
@@ -13,6 +14,7 @@ use aws_sdk_s3::{
 use aws_smithy_runtime_api::{client::result::SdkError, http::Response};
 use bytes::{Bytes, BytesMut};
 use futures::{future::BoxFuture, ready, FutureExt, Stream};
+use log::info;
 
 use crate::error::{ParpulseError, ParpulseResult};
 
@@ -75,6 +77,8 @@ pub struct S3ReaderStream {
     object_fut:
         Option<BoxFuture<'static, Result<GetObjectOutput, SdkError<GetObjectError, Response>>>>,
     object_body: Option<ByteStream>,
+
+    s3_total_time: Duration,
 }
 
 impl S3ReaderStream {
@@ -87,6 +91,7 @@ impl S3ReaderStream {
             current_key: 0,
             object_fut: None,
             object_body: None,
+            s3_total_time: Duration::new(0, 0),
         }
     }
 }
@@ -95,30 +100,51 @@ impl Stream for S3ReaderStream {
     type Item = ParpulseResult<Bytes>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        let start_time = Instant::now();
         if let Some(object_fut) = self.object_fut.as_mut() {
             match ready!(object_fut.poll_unpin(cx)) {
                 Ok(object) => {
                     self.object_fut.take();
                     self.object_body = Some(object.body);
+                    self.s3_total_time += start_time.elapsed();
                     self.poll_next(cx)
                 }
-                Err(e) => Poll::Ready(Some(Err(ParpulseError::from(e)))),
+                Err(e) => {
+                    self.s3_total_time += start_time.elapsed();
+                    Poll::Ready(Some(Err(ParpulseError::from(e))))
+                }
             }
         } else if let Some(object_body) = self.object_body.as_mut() {
             let poll_result = object_body.try_next().boxed().poll_unpin(cx);
             match poll_result {
                 Poll::Ready(ready_result) => match ready_result {
-                    Ok(Some(bytes)) => Poll::Ready(Some(Ok(bytes))),
+                    Ok(Some(bytes)) => {
+                        self.s3_total_time += start_time.elapsed();
+                        Poll::Ready(Some(Ok(bytes)))
+                    }
                     Ok(None) => {
                         self.object_body = None;
+                        self.s3_total_time += start_time.elapsed();
                         self.poll_next(cx)
                     }
-                    Err(e) => Poll::Ready(Some(Err(ParpulseError::from(e)))),
+                    Err(e) => {
+                        self.s3_total_time += start_time.elapsed();
+                        Poll::Ready(Some(Err(ParpulseError::from(e))))
+                    }
                 },
-                Poll::Pending => Poll::Pending,
+                Poll::Pending => {
+                    self.s3_total_time += start_time.elapsed();
+                    Poll::Pending
+                }
             }
         } else if self.current_key >= self.keys.len() {
             // No more data to read in S3.
+            self.s3_total_time += start_time.elapsed();
+            info!(
+                "S3ReaderStream for key {} total time: {:?}",
+                self.bucket.clone() + self.keys[0].as_str(),
+                self.s3_total_time
+            );
             Poll::Ready(None)
         } else {
             // There are more files to read in S3. Fetch the next object.
@@ -131,6 +157,7 @@ impl Stream for S3ReaderStream {
                 .boxed();
             self.object_fut = Some(fut);
             self.current_key += 1;
+            self.s3_total_time += start_time.elapsed();
             self.poll_next(cx)
         }
     }

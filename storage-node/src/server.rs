@@ -1,7 +1,8 @@
 use log::{info, warn};
 use parpulse_client::{RequestParams, S3Request};
-use std::net::IpAddr;
+use std::process::exit;
 use std::sync::Arc;
+use std::{fs, net::IpAddr};
 use tokio_stream::wrappers::ReceiverStream;
 use warp::{Filter, Rejection};
 
@@ -18,8 +19,8 @@ pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> 
     // Should at least be able to store one 100MB file in the cache.
     // TODO: Read the type of the cache from config.
     let dummy_size_per_disk_cache = 100 * 1024 * 1024;
-    let dummy_size_per_mem_cache = 100 * 1024;
-    let dummy_mem_max_file_cache = 10 * 1024;
+    let dummy_size_per_mem_cache = 110 * 1024 * 1024;
+    let dummy_mem_max_file_cache = 11 * 1 * 1024;
 
     let mut data_store_caches = Vec::new();
 
@@ -38,6 +39,18 @@ pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> 
     let is_mem_disk_cache = true;
     // TODO: try to use more fine-grained lock instead of locking the whole storage_manager
     let storage_manager = Arc::new(StorageManager::new(data_store_caches));
+
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.unwrap();
+        println!("Ctrl-C received, shutting down the server.");
+        for i in 0..DATA_STORE_CACHE_NUMBER {
+            if fs::metadata(i.to_string() + CACHE_BASE_PATH).is_ok() {
+                fs::remove_dir_all(i.to_string() + CACHE_BASE_PATH)
+                    .expect("remove cache files failed");
+            }
+        }
+        exit(0);
+    });
 
     let route = warp::path!("file")
         .and(warp::path::end())

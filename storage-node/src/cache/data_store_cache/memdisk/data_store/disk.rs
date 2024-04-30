@@ -1,4 +1,4 @@
-use std::{fs, sync::Arc, time::Instant};
+use std::{fs, sync::Arc};
 
 use bytes::Bytes;
 use futures::StreamExt;
@@ -96,17 +96,11 @@ impl DiskStore {
         bytes_vec: Option<Vec<Bytes>>,
         stream: Option<StorageReaderStream>,
     ) -> ParpulseResult<usize> {
-        let start_time = Instant::now();
         // NOTE(Yuanxin): Shall we spawn a task to write the data to disk?
         let bytes_written = self
             .disk_manager
             .write_bytes_and_stream_to_disk(bytes_vec, stream, &key)
             .await?;
-        info!(
-            "write data to disk: key: {}, time: {:?}",
-            key,
-            start_time.elapsed()
-        );
         Ok(bytes_written)
     }
 

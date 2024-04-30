@@ -3,12 +3,13 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use futures::{ready, Stream, StreamExt};
+use log::info;
 
 use crate::{
     disk::{disk_manager::DiskManager, stream::RandomDiskReadStream},
@@ -68,6 +69,7 @@ pub struct MockS3ReaderStream {
     current_disk_stream: Option<Pin<Box<RandomDiskReadStream>>>,
     file_paths: Vec<String>,
     current_key: usize,
+    s3_total_time: Duration,
 }
 
 impl MockS3ReaderStream {
@@ -76,6 +78,7 @@ impl MockS3ReaderStream {
             current_disk_stream: None,
             file_paths,
             current_key: 0,
+            s3_total_time: Duration::new(0, 0),
         }
     }
 }
@@ -84,18 +87,24 @@ impl Stream for MockS3ReaderStream {
     type Item = ParpulseResult<Bytes>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        let start_time = Instant::now();
         if let Some(current_disk_stream) = self.current_disk_stream.as_mut() {
             match ready!(current_disk_stream.poll_next_unpin(cx)) {
                 Some(Ok(bytes)) => {
                     if let Some(delay) = DELAY {
                         thread::sleep(delay);
                     }
+                    self.s3_total_time += start_time.elapsed();
                     Poll::Ready(Some(Ok(bytes)))
                 }
-                Some(Err(e)) => Poll::Ready(Some(Err(e))),
+                Some(Err(e)) => {
+                    self.s3_total_time += start_time.elapsed();
+                    Poll::Ready(Some(Err(e)))
+                }
                 None => {
                     self.current_key += 1;
                     self.current_disk_stream.take();
+                    self.s3_total_time += start_time.elapsed();
                     self.poll_next(cx)
                 }
             }
@@ -103,6 +112,12 @@ impl Stream for MockS3ReaderStream {
             // We need to create a new disk_stream since there is no last disk_stream, or it has
             // been consumed.
             if self.current_key >= self.file_paths.len() {
+                self.s3_total_time += start_time.elapsed();
+                info!(
+                    "MockS3ReaderStream for key {} total time: {:?}",
+                    self.file_paths.get(0).unwrap(),
+                    self.s3_total_time
+                );
                 return Poll::Ready(None);
             }
             let file_path = self.file_paths[self.current_key].clone();
@@ -110,8 +125,14 @@ impl Stream for MockS3ReaderStream {
                 Ok(disk_stream) => {
                     self.current_disk_stream = Some(Box::pin(disk_stream));
                 }
-                Err(e) => return Poll::Ready(Some(Err(e))),
+                Err(e) => {
+                    return {
+                        self.s3_total_time += start_time.elapsed();
+                        Poll::Ready(Some(Err(e)))
+                    }
+                }
             }
+            self.s3_total_time += start_time.elapsed();
             self.poll_next(cx)
         }
     }

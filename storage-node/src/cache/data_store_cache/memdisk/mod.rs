@@ -1,6 +1,10 @@
 pub mod data_store;
 
-use std::{collections::HashMap, sync::Arc, time::Instant};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use futures::stream::StreamExt;
 use log::{info, warn};
@@ -157,7 +161,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                 {
                     Ok(Some(rx)) => {
                         info!(
-                            "Get data from memory cache for {} in {:?} ms",
+                            "Get data from memory cache for {} in {:?}",
                             remote_location,
                             start_time.elapsed()
                         );
@@ -189,7 +193,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             .await?
         {
             info!(
-                "Get data from disk cache for {} in {:?} ms",
+                "Get data from disk cache for {} in {:?}",
                 remote_location,
                 start_time.elapsed()
             );
@@ -208,6 +212,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
         mut data_stream: StorageReaderStream,
     ) -> ParpulseResult<usize> {
         let start_time = Instant::now();
+        let start_time_initialize_notify = Instant::now();
         {
             // If in_progress of remote_location thread fails, it will clean the data from this hash map.
             let mut existed = false;
@@ -228,7 +233,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                         }
                         Status::Completed => {
                             info!(
-                                "Put data to cache for {} in {:?} ms, (notified by other thread)",
+                                "Put data to cache for {} in {:?}, (notified by other thread)",
                                 remote_location,
                                 start_time.elapsed()
                             );
@@ -254,7 +259,14 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                 ),
             );
         }
+        info!(
+            "Initialize notify for {} in {:?}",
+            remote_location,
+            start_time_initialize_notify.elapsed()
+        );
 
+        let start_time_mem_store_total = Instant::now();
+        let mut start_time_mem_evict = Instant::now();
         // TODO(lanlou): Also write the data to network.
         let mut bytes_to_disk = None;
         let mut bytes_mem_written = 0;
@@ -263,10 +275,14 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
         // 1. If the mem_store is enabled, first try to write the data to memory.
         // Note: Only file which size < mem_max_file_size can be written to memory.
         if let Some(mem_store) = &self.mem_store {
-            let start_time_mem_read = Instant::now();
+            let mut time_mem_read = Duration::new(0, 0);
+            let mut time_mem_poll_s3 = Duration::new(0, 0);
             loop {
+                let start_time_mem_poll_s3 = Instant::now();
                 match data_stream.next().await {
                     Some(Ok(bytes)) => {
+                        time_mem_poll_s3 += start_time_mem_poll_s3.elapsed();
+                        let start_time_mem_read = Instant::now();
                         bytes_mem_written += bytes.len();
                         // TODO: Need to write the data to network.
                         // TODO(lanlou): we need benchmark future, to put this lock outside the loop.
@@ -278,26 +294,44 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                             // If write_data returns something, it means the file size is too large
                             // to fit in the memory. We should put it to disk cache.
                             bytes_to_disk = Some(bytes_vec);
+                            time_mem_read += start_time_mem_read.elapsed();
                             break;
                         }
+                        time_mem_read += start_time_mem_read.elapsed();
                     }
                     Some(Err(e)) => {
                         // TODO(lanlou): Every time it returns an error, I need to manually add this clean code...
                         // How to improve?
+                        info!("NEVER HERE!!!");
                         self.status_of_keys.write().await.remove(&remote_location);
                         return Err(e);
                     }
-                    None => break,
+                    None => {
+                        time_mem_poll_s3 += start_time_mem_poll_s3.elapsed();
+                        break;
+                    }
                 }
             }
+            info!(
+                "Poll from S3 when writing memory for {} in {:?}",
+                remote_location, time_mem_poll_s3
+            );
 
             info!(
-                "Try to store data into memory for {} in {:?} ms, store {} bytes, success: {}",
+                "Try to store data into memory for {} in {:?}, store {} bytes, success: {}",
                 remote_location,
-                start_time_mem_read.elapsed(),
+                time_mem_read,
                 bytes_mem_written,
                 bytes_to_disk.is_none()
             );
+
+            info!(
+                "Total time for writing data to memory for {} in {:?}",
+                remote_location,
+                start_time_mem_store_total.elapsed()
+            );
+
+            start_time_mem_evict = Instant::now();
 
             if bytes_to_disk.is_none() {
                 let start_time_mem_update_replacer = Instant::now();
@@ -337,7 +371,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                     }
                 }
                 info!(
-                    "Update mem replacer for {} in {:?} ms",
+                    "Update mem replacer for {} in {:?}",
                     remote_location,
                     start_time_mem_update_replacer.elapsed()
                 );
@@ -378,12 +412,18 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             }
             if time_flag {
                 info!(
-                    "Put evicted data to disk cache for {} in {:?} ms",
+                    "Put evicted data to disk cache for {} in {:?}",
                     remote_location,
                     start_time_put_evicted_bytes_to_disk.elapsed()
                 );
             }
         }
+
+        info!(
+            "Evict data from memory cache for {} in {:?}",
+            remote_location,
+            start_time_mem_evict.elapsed()
+        );
 
         // 3. If the data is successfully written to memory, directly return.
         if self.mem_store.is_some() && bytes_to_disk.is_none() {
@@ -404,12 +444,12 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             // FIXME: status_of_keys write lock is released here, so the waken thread can immediately grab the lock
             notify.0.notify_waiters();
             info!(
-                "Notify all waiters after putting data to memory for key {} in {:?} ms",
+                "Notify all waiters after putting data to memory for key {} in {:?}",
                 remote_location,
                 start_time_notify_waiters_mem.elapsed()
             );
             info!(
-                "Put data to memory cache for {} in {:?} ms",
+                "Put data to memory cache for {} in {:?}",
                 remote_location,
                 start_time.elapsed()
             );
@@ -429,7 +469,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             return Err(e);
         }
         info!(
-            "Write data to disk cache for {} in {:?} ms",
+            "Write data to disk cache for {} in {:?}",
             remote_location,
             start_time_disk_write_data.elapsed()
         );
@@ -459,7 +499,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             disk_replacer.pin(&remote_location, 1);
         }
         info!(
-            "Update disk replacer for {} in {:?} ms",
+            "Update disk replacer for {} in {:?}",
             remote_location,
             start_time_update_disk_replacer.elapsed()
         );
@@ -478,12 +518,12 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
         }
         notify.0.notify_waiters();
         info!(
-            "Notify all waiters after putting data to disk for key {} in {:?} ms",
+            "Notify all waiters after putting data to disk for key {} in {:?}",
             remote_location,
             start_time_notify_waiters_disk.elapsed()
         );
         info!(
-            "Put data to disk cache for {} in {:?} ms",
+            "Put data to disk cache for {} in {:?}",
             remote_location,
             start_time.elapsed()
         );
