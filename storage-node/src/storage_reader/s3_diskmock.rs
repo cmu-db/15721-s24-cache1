@@ -7,7 +7,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use futures::{ready, Stream, StreamExt};
 
 use crate::{
@@ -119,13 +119,13 @@ impl Stream for MockS3ReaderStream {
 
 #[async_trait]
 impl AsyncStorageReader for MockS3Reader {
-    async fn read_all(&self) -> ParpulseResult<Bytes> {
-        let mut bytes = BytesMut::new();
+    async fn read_all(&self) -> ParpulseResult<Vec<Bytes>> {
+        let mut bytes_vec = Vec::new();
         for file_path in &self.file_paths {
             let (_, data) = self.disk_manager.read_disk_all(file_path).await?;
-            bytes.extend(data);
+            bytes_vec.push(data);
         }
-        Ok(bytes.freeze())
+        Ok(bytes_vec)
     }
 
     async fn into_stream(self) -> ParpulseResult<StorageReaderStream> {

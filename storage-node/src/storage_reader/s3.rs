@@ -11,7 +11,7 @@ use aws_sdk_s3::{
     Client,
 };
 use aws_smithy_runtime_api::{client::result::SdkError, http::Response};
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use futures::{future::BoxFuture, ready, FutureExt, Stream};
 
 use crate::error::{ParpulseError, ParpulseResult};
@@ -140,8 +140,8 @@ impl Stream for S3ReaderStream {
 impl AsyncStorageReader for S3Reader {
     /// NEVER call this method if you do not know the size of the data -- collecting
     /// all data into one buffer might lead to OOM.
-    async fn read_all(&self) -> ParpulseResult<Bytes> {
-        let mut bytes = BytesMut::new();
+    async fn read_all(&self) -> ParpulseResult<Vec<Bytes>> {
+        let mut bytes_vec = Vec::new();
         for key in &self.keys {
             let object = self
                 .client
@@ -151,7 +151,7 @@ impl AsyncStorageReader for S3Reader {
                 .send()
                 .await
                 .map_err(ParpulseError::from)?;
-            bytes.extend(
+            bytes_vec.push(
                 object
                     .body
                     .collect()
@@ -160,7 +160,7 @@ impl AsyncStorageReader for S3Reader {
                     .into_bytes(),
             );
         }
-        Ok(bytes.freeze())
+        Ok(bytes_vec)
     }
 
     async fn into_stream(self) -> ParpulseResult<StorageReaderStream> {
