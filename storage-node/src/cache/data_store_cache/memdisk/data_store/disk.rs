@@ -56,6 +56,7 @@ impl DiskStore {
         &self,
         key: &str,
         disk_replacer: Arc<Mutex<R>>,
+        key_replacer: String,
     ) -> ParpulseResult<Option<Receiver<ParpulseResult<Bytes>>>>
     where
         R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue> + 'static,
@@ -68,7 +69,6 @@ impl DiskStore {
         // FIXME: Shall we consider the situation where the data is not found?
         let mut disk_stream = self.disk_manager.disk_read_stream(key, buffer_size).await?;
         let (tx, rx) = tokio::sync::mpsc::channel(DEFAULT_DISK_CHANNEL_BUFFER_SIZE);
-        let key_str = key.to_string().clone();
         tokio::spawn(async move {
             loop {
                 match disk_stream.next().await {
@@ -78,11 +78,13 @@ impl DiskStore {
                             .unwrap();
                     }
                     Some(Err(e)) => tx.send(Err(e)).await.unwrap(),
-                    None => break,
+                    None => {
+                        // TODO(lanlou): when second read, so there is no need to unpin, how to improve?
+                        disk_replacer.lock().await.unpin(&key_replacer);
+                        break;
+                    }
                 }
             }
-            // TODO(lanlou): when second read, so there is no need to unpin, how to improve?
-            disk_replacer.lock().await.unpin(&key_str);
         });
         Ok(Some(rx))
     }

@@ -611,4 +611,73 @@ mod tests {
         assert!(result.6.is_ok());
         assert_eq!(consume_receiver(result.6.unwrap().unwrap()).await, 930);
     }
+
+    #[tokio::test]
+    async fn test_evict_disk() {
+        let disk_cache = LruReplacer::new(120000);
+
+        let tmp = tempfile::tempdir().unwrap();
+        let disk_cache_base_path = tmp.path().to_owned();
+
+        let data_store_cache = MemDiskStoreCache::new(
+            disk_cache,
+            disk_cache_base_path.display().to_string(),
+            None,
+            None,
+        );
+        let storage_manager = Arc::new(StorageManager::new(vec![data_store_cache]));
+
+        let request_path_bucket1 = "tests-parquet".to_string();
+        let request_path_keys1 = vec!["userdata2.parquet".to_string()];
+        let request_data1 = RequestParams::MockS3((request_path_bucket1, request_path_keys1));
+
+        let request_path_bucket2 = "tests-parquet".to_string();
+        let request_path_keys2 = vec!["userdata1.parquet".to_string()];
+        let request_data2 = RequestParams::MockS3((request_path_bucket2, request_path_keys2));
+
+        let res1 = storage_manager.get_data(request_data1.clone(), true).await;
+        assert!(res1.is_ok());
+        assert_eq!(consume_receiver(res1.unwrap()).await, 112193);
+        let res2 = storage_manager.get_data(request_data2.clone(), true).await;
+        assert!(res2.is_ok());
+        assert_eq!(consume_receiver(res2.unwrap()).await, 113629);
+        let res3 = storage_manager.get_data(request_data1.clone(), true).await;
+        assert!(res3.is_ok());
+        assert_eq!(consume_receiver(res3.unwrap()).await, 112193);
+    }
+
+    #[tokio::test]
+    async fn test_evict_mem() {
+        let disk_cache = LruReplacer::new(10);
+        let mem_cache = LruReplacer::new(120000);
+
+        let tmp = tempfile::tempdir().unwrap();
+        let disk_cache_base_path = tmp.path().to_owned();
+
+        let data_store_cache = MemDiskStoreCache::new(
+            disk_cache,
+            disk_cache_base_path.display().to_string(),
+            Some(mem_cache),
+            Some(120000),
+        );
+        let storage_manager = Arc::new(StorageManager::new(vec![data_store_cache]));
+
+        let request_path_bucket1 = "tests-parquet".to_string();
+        let request_path_keys1 = vec!["userdata2.parquet".to_string()];
+        let request_data1 = RequestParams::MockS3((request_path_bucket1, request_path_keys1));
+
+        let request_path_bucket2 = "tests-parquet".to_string();
+        let request_path_keys2 = vec!["userdata1.parquet".to_string()];
+        let request_data2 = RequestParams::MockS3((request_path_bucket2, request_path_keys2));
+
+        let res1 = storage_manager.get_data(request_data1.clone(), true).await;
+        assert!(res1.is_ok());
+        assert_eq!(consume_receiver(res1.unwrap()).await, 112193);
+        let res2 = storage_manager.get_data(request_data2.clone(), true).await;
+        assert!(res2.is_ok());
+        assert_eq!(consume_receiver(res2.unwrap()).await, 113629);
+        let res3 = storage_manager.get_data(request_data1.clone(), true).await;
+        assert!(res3.is_ok());
+        assert_eq!(consume_receiver(res3.unwrap()).await, 112193);
+    }
 }

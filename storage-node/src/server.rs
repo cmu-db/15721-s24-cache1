@@ -12,14 +12,14 @@ use crate::{
 };
 
 const CACHE_BASE_PATH: &str = "cache/";
-const DATA_STORE_CACHE_NUMBER: usize = 6;
+const DATA_STORE_CACHE_NUMBER: usize = 3;
 
 pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> {
     // Should at least be able to store one 100MB file in the cache.
     // TODO: Read the type of the cache from config.
-    let dummy_size_per_disk_cache = 100 * 1024 * 1024;
-    let dummy_size_per_mem_cache = 110 * 1024 * 1024;
-    let dummy_mem_max_file_cache = 11 * 1024 * 1024;
+    let dummy_size_per_disk_cache = 1024 * 1024 * 1024;
+    let dummy_size_per_mem_cache = 200 * 1024 * 1024;
+    let dummy_mem_max_file_cache = 10 * 1024 * 1024 + 1;
 
     let mut data_store_caches = Vec::new();
 
@@ -92,6 +92,8 @@ pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> 
             }
         });
 
+    let heartbeat = warp::path!("heartbeat").map(|| warp::http::StatusCode::OK);
+
     // Catch a request that does not match any of the routes above.
     let catch_all = warp::any()
         .and(warp::path::full())
@@ -100,7 +102,7 @@ pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> 
             warp::http::StatusCode::NOT_FOUND
         });
 
-    let routes = route.or(catch_all);
+    let routes = route.or(heartbeat).or(catch_all);
     let ip_addr: IpAddr = ip_addr.parse().unwrap();
     warp::serve(routes).run((ip_addr, port)).await;
 
