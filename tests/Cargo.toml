@@ -8,7 +8,9 @@ storage-node = { path = "../storage-node" }
 parpulse-client = { path = "../storage-client" }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 arrow = "50.0.0"
-serial_test = "0.4"
 log = "0.4"
 istziio-client = "0.1"
+
+[dev-dependencies]
+serial_test = "3.1"
 env_logger = "0.11"

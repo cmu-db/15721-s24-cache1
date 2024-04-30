@@ -92,6 +92,8 @@ pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> 
             }
         });
 
+    let heartbeat = warp::path!("heartbeat").map(|| warp::http::StatusCode::OK);
+
     // Catch a request that does not match any of the routes above.
     let catch_all = warp::any()
         .and(warp::path::full())
@@ -100,7 +102,7 @@ pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> 
             warp::http::StatusCode::NOT_FOUND
         });
 
-    let routes = route.or(catch_all);
+    let routes = route.or(heartbeat).or(catch_all);
     let ip_addr: IpAddr = ip_addr.parse().unwrap();
     warp::serve(routes).run((ip_addr, port)).await;
 
