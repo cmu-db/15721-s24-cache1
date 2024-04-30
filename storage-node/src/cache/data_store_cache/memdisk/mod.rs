@@ -33,7 +33,7 @@ pub type MemDiskStoreReplacerKey = String;
 /// Status -> completed/incompleted; usize -> file_size
 /// Notify -> notify; usize -> notify_waiter_count
 /// FIXME: make (Notify, Mutex<usize>) a struct to make it more readable.
-type StatusKeyHashMap = HashMap<String, ((Status, usize), Arc<(Notify, Mutex<usize>)>)>;
+type StatusKeyHashMap = HashMap<String, ((Status, usize), Arc<MemDiskStoreNotify>)>;
 
 pub struct MemDiskStoreReplacerValue {
     /// The path to the data store. For mem store, it should be data's s3 path. For disk
@@ -65,7 +65,21 @@ impl ReplacerValue for MemDiskStoreReplacerValue {
     }
 }
 
-#[derive(Clone)]
+struct MemDiskStoreNotify {
+    inner: Notify,
+    waiter_count: Mutex<usize>,
+}
+
+impl MemDiskStoreNotify {
+    fn new() -> Self {
+        MemDiskStoreNotify {
+            inner: Notify::new(),
+            waiter_count: Mutex::new(0),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
 enum Status {
     Incompleted,
     Completed,
@@ -130,6 +144,55 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>>
             }
         }
     }
+
+    async fn notify_waiters_error(&self, key: &str) {
+        let notify;
+        {
+            let mut status_of_keys = self.status_of_keys.write().await;
+            notify = status_of_keys.remove(key).unwrap().1;
+        }
+        notify.inner.notify_waiters();
+    }
+
+    async fn notify_waiters_mem(&self, key: &String, bytes_mem_written: usize) {
+        let notify;
+        {
+            let mut status_of_keys = self.status_of_keys.write().await;
+            let ((status, size), notify_ref) = status_of_keys.get_mut(key).unwrap();
+            *size = bytes_mem_written;
+            {
+                let notify_waiter = notify_ref.waiter_count.lock().await;
+                if *notify_waiter > 0 {
+                    self.mem_replacer
+                        .as_ref()
+                        .unwrap()
+                        .lock()
+                        .await
+                        .pin(key, *notify_waiter);
+                }
+            }
+            notify = notify_ref.clone();
+            *status = Status::Completed;
+        }
+        // FIXME: status_of_keys write lock is released here, so the waken thread can immediately grab the lock
+        notify.inner.notify_waiters();
+    }
+
+    async fn notify_waiters_disk(&self, key: &String, bytes_disk_written: usize) {
+        let notify;
+        {
+            let mut status_of_keys = self.status_of_keys.write().await;
+            let ((status, size), notify_ref) = status_of_keys.get_mut(key).unwrap();
+            *status = Status::Completed;
+            *size = bytes_disk_written;
+            let notify_waiter = notify_ref.waiter_count.lock().await;
+            if *notify_waiter > 0 {
+                self.disk_replacer.lock().await.pin(key, *notify_waiter);
+            }
+            notify = notify_ref.clone();
+        }
+        notify.inner.notify_waiters();
+    }
 }
 
 #[async_trait]
@@ -180,7 +243,11 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
         }
         if let Some(data) = self
             .disk_store
-            .read_data(&data_store_key, self.disk_replacer.clone())
+            .read_data(
+                &data_store_key,
+                self.disk_replacer.clone(),
+                remote_location.clone(),
+            )
             .await?
         {
             Ok(Some(data))
@@ -208,10 +275,10 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                     match status {
                         Status::Incompleted => {
                             notify = notify_ref.clone();
-                            *notify_ref.1.lock().await += 1;
+                            *notify_ref.waiter_count.lock().await += 1;
                             // The Notified future is guaranteed to receive wakeups from notify_waiters()
                             // as soon as it has been created, even if it has not yet been polled.
-                            let notified = notify.0.notified();
+                            let notified = notify.inner.notified();
                             drop(status_of_keys);
                             notified.await;
                         }
@@ -234,7 +301,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                 remote_location.clone(),
                 (
                     (Status::Incompleted, 0),
-                    Arc::new((Notify::new(), Mutex::new(0))),
+                    Arc::new(MemDiskStoreNotify::new()),
                 ),
             );
         }
@@ -243,9 +310,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
         // TODO(lanlou): Also write the data to network.
         let mut bytes_to_disk = None;
         let mut bytes_mem_written = 0;
-        let mut evicted_bytes_to_disk: Option<Vec<(MemDiskStoreReplacerKey, (Vec<Bytes>, usize))>> =
-            None;
-        // 1. If the mem_store is enabled, first try to write the data to memory.
+        // If the mem_store is enabled, first try to write the data to memory.
         // Note: Only file which size < mem_max_file_size can be written to memory.
         if let Some(mem_store) = &self.mem_store {
             loop {
@@ -268,7 +333,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                     Some(Err(e)) => {
                         // TODO(lanlou): Every time it returns an error, I need to manually add this clean code...
                         // How to improve?
-                        self.status_of_keys.write().await.remove(&remote_location);
+                        self.notify_waiters_error(&remote_location).await;
                         return Err(e);
                     }
                     None => break,
@@ -300,72 +365,83 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                     // If successfully putting it into mem_replacer, we should record the evicted data,
                     // delete them from mem_store, and put all of them to disk cache.
                     if let Some(evicted_keys) = replacer_put_status {
-                        let mut evicted_bytes_to_disk_inner = Vec::new();
                         let mut mem_store = mem_store.write().await;
+                        // TODO(lanlou): I have to grab this huge lock when evicting from mem to disk, since otherwise another
+                        // thread may have the same evict_key as the new coming request, and it will put `Incompleted` into status_of_keys,
+                        // and there is conflict. (maybe add incompleted status for evicted keys, but tricky)
+                        let mut status_of_keys = self.status_of_keys.write().await;
+                        drop(mem_replacer);
+                        // Put the evicted keys to disk cache.
                         for evicted_key in evicted_keys {
-                            evicted_bytes_to_disk_inner.push((
+                            if let Some(((status, _), _)) = status_of_keys.get(&evicted_key.clone())
+                            {
+                                // If the key is still in the status_of_keys, it means the data is still in progress.
+                                // We should not put the data to disk cache.
+                                if *status == Status::Incompleted {
+                                    continue;
+                                }
+                            }
+
+                            let (bytes_vec, data_size) =
+                                mem_store.clean_data(&evicted_key).unwrap();
+                            assert_ne!(evicted_key, remote_location);
+                            let disk_store_key = self.disk_store.data_store_key(&evicted_key);
+                            if self
+                                .disk_store
+                                .write_data(disk_store_key.clone(), Some(bytes_vec), None)
+                                .await
+                                .is_err()
+                            {
+                                warn!("Failed to write evicted data to disk for {}", evicted_key);
+                                continue;
+                            }
+                            let mut disk_replacer = self.disk_replacer.lock().await;
+                            match disk_replacer.put(
                                 evicted_key.clone(),
-                                mem_store.clean_data(&evicted_key).unwrap(),
-                            ));
+                                MemDiskStoreReplacerValue::new(disk_store_key.clone(), data_size),
+                            ) {
+                                Some(evicted_keys) => {
+                                    // evict data from disk
+                                    for evicted_key in evicted_keys {
+                                        // FIXME: I think all status of the evicted_key removed here should be
+                                        // `Completed`?
+                                        status_of_keys.remove(&evicted_key);
+                                        self.disk_store
+                                            .clean_data(
+                                                &self.disk_store.data_store_key(&evicted_key),
+                                            )
+                                            .await?;
+                                    }
+                                }
+                                None => {
+                                    if let Err(e) =
+                                        self.disk_store.clean_data(&disk_store_key).await
+                                    {
+                                        warn!(
+                                            "Failed to clean data ({}) from disk store: {}",
+                                            disk_store_key, e
+                                        );
+                                    }
+                                    // It is not main in-progress thread for evicted_key, and its status should be
+                                    // `Completed`, so there is totally no need to notify the waiters.
+                                    // FIXME: can we safely remove evicted_key here?
+                                    status_of_keys.remove(&evicted_key);
+                                }
+                            }
                         }
-                        evicted_bytes_to_disk = Some(evicted_bytes_to_disk_inner);
                     }
                 }
             }
-        }
 
-        // 2. If applicable, put all the evicted data into disk cache.
-        // Don't need to write the data to network for evicted keys.
-        if let Some(evicted_bytes_to_disk) = evicted_bytes_to_disk {
-            for (remote_location_evicted, (bytes_vec, data_size)) in evicted_bytes_to_disk {
-                assert_ne!(remote_location_evicted, remote_location);
-                let disk_store_key = self.disk_store.data_store_key(&remote_location_evicted);
-                self.disk_store
-                    .write_data(disk_store_key.clone(), Some(bytes_vec), None)
-                    .await?;
-                let mut disk_replacer = self.disk_replacer.lock().await;
-                if disk_replacer
-                    .put(
-                        remote_location_evicted,
-                        MemDiskStoreReplacerValue::new(disk_store_key.clone(), data_size),
-                    )
-                    .is_none()
-                {
-                    if let Err(e) = self.disk_store.clean_data(&disk_store_key).await {
-                        warn!(
-                            "Failed to clean data ({}) from disk store: {}",
-                            disk_store_key, e
-                        );
-                    }
-                    warn!(
-                        "Failed to put evicted data ({}) to disk replacer.",
-                        disk_store_key
-                    );
-                }
+            // If the data is successfully written to memory, directly return.
+            if bytes_to_disk.is_none() {
+                self.notify_waiters_mem(&remote_location, bytes_mem_written)
+                    .await;
+                return Ok(bytes_mem_written);
             }
         }
 
-        // 3. If the data is successfully written to memory, directly return.
-        if self.mem_store.is_some() && bytes_to_disk.is_none() {
-            let notify;
-            {
-                let mut status_of_keys = self.status_of_keys.write().await;
-                let ((status, size), notify_ref) =
-                    status_of_keys.get_mut(&remote_location).unwrap();
-                *status = Status::Completed;
-                *size = bytes_mem_written;
-                {
-                    let mut mem_replacer = self.mem_replacer.as_ref().unwrap().lock().await;
-                    mem_replacer.pin(&remote_location, *notify_ref.1.lock().await);
-                }
-                notify = notify_ref.clone();
-            }
-            // FIXME: status_of_keys write lock is released here, so the waken thread can immediately grab the lock
-            notify.0.notify_waiters();
-            return Ok(bytes_mem_written);
-        }
-
-        // 4. If the data is not written to memory_cache successfully, then cache it to disk.
+        // If the data is not written to memory_cache successfully, then cache it to disk.
         // Need to write the data to network for the current key.
         let disk_store_key = self.disk_store.data_store_key(&remote_location);
         let data_size_wrap = self
@@ -373,46 +449,42 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             .write_data(disk_store_key.clone(), bytes_to_disk, Some(data_stream))
             .await;
         if let Err(e) = data_size_wrap {
-            self.status_of_keys.write().await.remove(&remote_location);
+            self.notify_waiters_error(&remote_location).await;
             return Err(e);
         }
         let data_size = data_size_wrap.unwrap();
         {
             let mut disk_replacer = self.disk_replacer.lock().await;
-            if disk_replacer
-                .put(
-                    remote_location.clone(),
-                    MemDiskStoreReplacerValue::new(disk_store_key.clone(), data_size),
-                )
-                .is_none()
-            {
-                if let Err(e) = self.disk_store.clean_data(&disk_store_key).await {
-                    // TODO: do we need to notify the caller this failure?
-                    warn!(
-                        "Failed to clean data ({}) from disk store: {}",
-                        disk_store_key, e
-                    );
+            match disk_replacer.put(
+                remote_location.clone(),
+                MemDiskStoreReplacerValue::new(disk_store_key.clone(), data_size),
+            ) {
+                Some(evicted_keys) => {
+                    let mut status_of_keys = self.status_of_keys.write().await;
+                    for evicted_key in evicted_keys {
+                        status_of_keys.remove(&evicted_key);
+                        self.disk_store
+                            .clean_data(&self.disk_store.data_store_key(&evicted_key))
+                            .await?;
+                    }
                 }
-                self.status_of_keys.write().await.remove(&remote_location);
-                return Err(ParpulseError::Internal(
-                    "Failed to put data to disk replacer.".to_string(),
-                ));
+                None => {
+                    if let Err(e) = self.disk_store.clean_data(&disk_store_key).await {
+                        warn!(
+                            "Failed to clean data ({}) from disk store: {}",
+                            disk_store_key, e
+                        );
+                    }
+                    // We have to notify waiters, because it is the main thread for the current key.
+                    self.notify_waiters_error(&remote_location).await;
+                    return Err(ParpulseError::Internal(
+                        "Failed to put data to disk replacer.".to_string(),
+                    ));
+                }
             }
             disk_replacer.pin(&remote_location, 1);
         }
-        let notify;
-        {
-            let mut status_of_keys = self.status_of_keys.write().await;
-            let ((status, size), notify_ref) = status_of_keys.get_mut(&remote_location).unwrap();
-            *status = Status::Completed;
-            *size = data_size;
-            self.disk_replacer
-                .lock()
-                .await
-                .pin(&remote_location, *notify_ref.1.lock().await);
-            notify = notify_ref.clone();
-        }
-        notify.0.notify_waiters();
+        self.notify_waiters_disk(&remote_location, data_size).await;
         Ok(data_size)
     }
 }
