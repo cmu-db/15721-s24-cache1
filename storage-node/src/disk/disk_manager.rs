@@ -128,56 +128,56 @@ impl DiskManager {
         }
 
         let start_time_disk_write_and_poll_from_s3 = Instant::now();
-        // if let Some(mut stream) = stream {
-        //     let bytes_cur = stream.next().await;
-        //     if bytes_cur.is_none() {
-        //         file.flush().await?;
-        //         return Ok(bytes_written);
-        //     }
-        //     let mut bytes_cur = bytes_cur.unwrap()?;
-
-        //     loop {
-        //         let disk_write_fut = TryFutureExt::into_future(file.write_all(&bytes_cur));
-        //         let bytes_next_fut = stream.next().into_future();
-        //         match join!(disk_write_fut, bytes_next_fut) {
-        //             (Ok(_), Some(Ok(bytes_next))) => {
-        //                 bytes_written += bytes_cur.len();
-        //                 bytes_cur = bytes_next;
-        //             }
-        //             (Ok(_), None) => {
-        //                 bytes_written += bytes_cur.len();
-        //                 break;
-        //             }
-        //             (Err(e), _) => return Err(ParpulseError::Disk(e)),
-        //             (Ok(_), Some(Err(e))) => return Err(e),
-        //         }
-        //     }
-        // }
         if let Some(mut stream) = stream {
-            let mut time_s3 = Duration::new(0, 0);
-            let mut time_disk = Duration::new(0, 0);
+            let bytes_cur = stream.next().await;
+            if bytes_cur.is_none() {
+                file.flush().await?;
+                return Ok(bytes_written);
+            }
+            let mut bytes_cur = bytes_cur.unwrap()?;
+
             loop {
-                let start_time_s3 = Instant::now();
-                match stream.next().await {
-                    Some(Ok(bytes)) => {
-                        time_s3 += start_time_s3.elapsed();
-                        let start_time_disk = Instant::now();
-                        file.write_all(&bytes).await?;
-                        time_disk += start_time_disk.elapsed();
-                        bytes_written += bytes.len();
+                let disk_write_fut = TryFutureExt::into_future(file.write_all(&bytes_cur));
+                let bytes_next_fut = stream.next().into_future();
+                match join!(disk_write_fut, bytes_next_fut) {
+                    (Ok(_), Some(Ok(bytes_next))) => {
+                        bytes_written += bytes_cur.len();
+                        bytes_cur = bytes_next;
                     }
-                    Some(Err(e)) => return Err(e),
-                    None => {
-                        time_s3 += start_time_s3.elapsed();
+                    (Ok(_), None) => {
+                        bytes_written += bytes_cur.len();
                         break;
                     }
+                    (Err(e), _) => return Err(ParpulseError::Disk(e)),
+                    (Ok(_), Some(Err(e))) => return Err(e),
                 }
             }
-            info!(
-                "Separately put {} bytes from S3 to disk for key {}, time_s3: {:?}, time_disk: {:?}",
-                bytes_written, disk_path, time_s3, time_disk
-            );
         }
+        // if let Some(mut stream) = stream {
+        //     let mut time_s3 = Duration::new(0, 0);
+        //     let mut time_disk = Duration::new(0, 0);
+        //     loop {
+        //         let start_time_s3 = Instant::now();
+        //         match stream.next().await {
+        //             Some(Ok(bytes)) => {
+        //                 time_s3 += start_time_s3.elapsed();
+        //                 let start_time_disk = Instant::now();
+        //                 file.write_all(&bytes).await?;
+        //                 time_disk += start_time_disk.elapsed();
+        //                 bytes_written += bytes.len();
+        //             }
+        //             Some(Err(e)) => return Err(e),
+        //             None => {
+        //                 time_s3 += start_time_s3.elapsed();
+        //                 break;
+        //             }
+        //         }
+        //     }
+        //     info!(
+        //         "Separately put {} bytes from S3 to disk for key {}, time_s3: {:?}, time_disk: {:?}",
+        //         bytes_written, disk_path, time_s3, time_disk
+        //     );
+        // }
         info!(
             "Put {} bytes from S3 to disk for key {}, time: {:?}",
             bytes_written,
