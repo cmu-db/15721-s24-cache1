@@ -137,13 +137,29 @@ impl StorageClientImpl {
     fn get_request_url_and_params(
         &self,
         location: (String, Vec<String>),
-    ) -> (String, Vec<(&str, String)>) {
-        let url = format!("{}file", self.storage_server_endpoint);
+    ) -> Result<(String, Vec<(&str, String)>)> {
+        let scheme = self
+            .storage_server_endpoint
+            .scheme()
+            .ok_or_else(|| anyhow!("Failed to get the scheme of the storage server endpoint."))?
+            .to_owned();
+        let authority = self
+            .storage_server_endpoint
+            .authority()
+            .ok_or_else(|| anyhow!("Failed to get the authority of the storage server endpoint."))?
+            .to_owned();
+        let path = "/file";
+        let url = Uri::builder()
+            .scheme(scheme)
+            .authority(authority)
+            .path_and_query(path)
+            .build()
+            .unwrap();
         let params = vec![
             (PARAM_BUCKET_KEY, location.0),
             (PARAM_KEYS_KEY, location.1.join(",")),
         ];
-        (url, params)
+        Ok((url.to_string(), params))
     }
 
     pub async fn request_data_test(
@@ -162,7 +178,7 @@ impl StorageClientImpl {
 
         // Then we need to send the request to the storage server.
         let client = Client::new();
-        let (url, mut params) = self.get_request_url_and_params(location);
+        let (url, mut params) = self.get_request_url_and_params(location)?;
         params.push(("is_test", "true".to_owned()));
 
         let url = Url::parse_with_params(&url, params)?;
@@ -187,7 +203,7 @@ impl StorageClient for StorageClientImpl {
 
         // Then we need to send the request to the storage server.
         let client = Client::new();
-        let (url, params) = self.get_request_url_and_params(location);
+        let (url, params) = self.get_request_url_and_params(location)?;
         let url = Url::parse_with_params(&url, params)?;
         let response = client.get(url).send().await?;
         Self::get_data_from_response(response).await
