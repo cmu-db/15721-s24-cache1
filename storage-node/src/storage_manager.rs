@@ -606,13 +606,13 @@ mod tests {
         let request_path_keys2 = vec!["userdata1.parquet".to_string()];
         let request_data2 = RequestParams::MockS3((request_path_bucket2, request_path_keys2));
 
-        let res1 = storage_manager.get_data(request_data1.clone(), true).await;
+        let res1 = storage_manager.get_data(request_data1.clone()).await;
         assert!(res1.is_ok());
         assert_eq!(consume_receiver(res1.unwrap()).await, 112193);
-        let res2 = storage_manager.get_data(request_data2.clone(), true).await;
+        let res2 = storage_manager.get_data(request_data2.clone()).await;
         assert!(res2.is_ok());
         assert_eq!(consume_receiver(res2.unwrap()).await, 113629);
-        let res3 = storage_manager.get_data(request_data1.clone(), true).await;
+        let res3 = storage_manager.get_data(request_data1.clone()).await;
         assert!(res3.is_ok());
         assert_eq!(consume_receiver(res3.unwrap()).await, 112193);
     }
@@ -641,13 +641,13 @@ mod tests {
         let request_path_keys2 = vec!["userdata1.parquet".to_string()];
         let request_data2 = RequestParams::MockS3((request_path_bucket2, request_path_keys2));
 
-        let res1 = storage_manager.get_data(request_data1.clone(), true).await;
+        let res1 = storage_manager.get_data(request_data1.clone()).await;
         assert!(res1.is_ok());
         assert_eq!(consume_receiver(res1.unwrap()).await, 112193);
-        let res2 = storage_manager.get_data(request_data2.clone(), true).await;
+        let res2 = storage_manager.get_data(request_data2.clone()).await;
         assert!(res2.is_ok());
         assert_eq!(consume_receiver(res2.unwrap()).await, 113629);
-        let res3 = storage_manager.get_data(request_data1.clone(), true).await;
+        let res3 = storage_manager.get_data(request_data1.clone()).await;
         assert!(res3.is_ok());
         assert_eq!(consume_receiver(res3.unwrap()).await, 112193);
     }
