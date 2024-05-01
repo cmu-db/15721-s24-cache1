@@ -17,7 +17,7 @@ use crate::{
 
 /// TODO(lanlou): make them configurable.
 /// MAX_DISK_READER_BUFFER_SIZE is 10MB.
-const MAX_DISK_READER_BUFFER_SIZE: usize = 10 * 1024 * 1024;
+const MAX_DISK_READER_BUFFER_SIZE: usize = 100 * 1024 * 1024;
 const DEFAULT_DISK_CHANNEL_BUFFER_SIZE: usize = 512;
 
 /// [`DiskStore`] stores the contents of remote objects on the local disk.

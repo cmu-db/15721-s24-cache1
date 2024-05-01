@@ -17,7 +17,7 @@ const DATA_STORE_CACHE_NUMBER: usize = 3;
 pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> {
     // Should at least be able to store one 100MB file in the cache.
     // TODO: Read the type of the cache from config.
-    let dummy_size_per_disk_cache = 1000 * 1024 * 1024;
+    let dummy_size_per_disk_cache = 1024 * 1024 * 1024;
     let dummy_size_per_mem_cache = 200 * 1024 * 1024;
     let dummy_mem_max_file_cache = 10 * 1024 * 1024 + 1;
 
@@ -35,7 +35,6 @@ pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> 
         data_store_caches.push(data_store_cache);
     }
 
-    let is_mem_disk_cache = true;
     // TODO: try to use more fine-grained lock instead of locking the whole storage_manager
     let storage_manager = Arc::new(StorageManager::new(data_store_caches));
 
@@ -63,7 +62,7 @@ pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> 
                 } else {
                     RequestParams::S3((bucket, vec![keys]))
                 };
-                let result = storage_manager.get_data(request, is_mem_disk_cache).await;
+                let result = storage_manager.get_data(request).await;
                 match result {
                     Ok(data_rx) => {
                         let stream = ReceiverStream::new(data_rx);
