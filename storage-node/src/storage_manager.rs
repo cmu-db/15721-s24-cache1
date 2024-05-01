@@ -6,7 +6,7 @@ use crate::{
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use log::debug;
+use log::{debug, info};
 use parpulse_client::RequestParams;
 use tokio::sync::mpsc::Receiver;
 
@@ -14,6 +14,7 @@ use tokio::sync::mpsc::Receiver;
 pub trait StorageManager: Send + Sync {
     async fn get_data(
         &self,
+        request_id: usize,
         request: RequestParams,
     ) -> ParpulseResult<Receiver<ParpulseResult<Bytes>>>;
 }
@@ -35,6 +36,7 @@ impl<C: DataStoreCache> StorageManagerImpl<C> {
 
     pub async fn get_data(
         &self,
+        request_id: usize,
         request: RequestParams,
     ) -> ParpulseResult<Receiver<ParpulseResult<Bytes>>> {
         // 1. Try to get data from the cache first.
@@ -58,8 +60,16 @@ impl<C: DataStoreCache> StorageManagerImpl<C> {
 
         let data_rx = data_store_cache.get_data_from_cache(&request).await?;
         if let Some(data_rx) = data_rx {
+            info!(
+                "[Parpulse Logging] request {} cache hit for cache key {}",
+                request_id, cache_key
+            );
             Ok(data_rx)
         } else {
+            info!(
+                "[Parpulse Logging] request {} cache miss for cache key {}",
+                request_id, cache_key
+            );
             data_store_cache.put_data_to_cache(&request).await?;
             // TODO (kunle): Push down the response writer rather than calling get_data_from_cache again.
             let data_rx = data_store_cache.get_data_from_cache(&request).await?;
@@ -75,9 +85,10 @@ impl<C: DataStoreCache> StorageManagerImpl<C> {
 impl<C: DataStoreCache + Send + Sync> StorageManager for StorageManagerImpl<C> {
     async fn get_data(
         &self,
+        request_id: usize,
         request: RequestParams,
     ) -> ParpulseResult<Receiver<ParpulseResult<Bytes>>> {
-        self.get_data(request).await
+        self.get_data(request_id, request).await
     }
 }
 
@@ -133,7 +144,7 @@ mod tests {
         let request = RequestParams::MockS3((bucket, keys));
 
         let mut start_time = Instant::now();
-        let result = storage_manager.get_data(request.clone()).await;
+        let result = storage_manager.get_data(0, request.clone()).await;
         assert!(result.is_ok());
         let mut data_rx = result.unwrap();
         let mut total_bytes = 0;
@@ -149,7 +160,7 @@ mod tests {
         let delta_time_miss = Instant::now() - start_time;
 
         start_time = Instant::now();
-        let result = storage_manager.get_data(request).await;
+        let result = storage_manager.get_data(0, request).await;
         assert!(result.is_ok());
         let data_rx = result.unwrap();
         assert_eq!(consume_receiver(data_rx).await, 113629);
@@ -190,7 +201,7 @@ mod tests {
         let request_small =
             RequestParams::MockS3((request_path_small_bucket, request_path_small_keys));
 
-        let result = storage_manager.get_data(request_small.clone()).await;
+        let result = storage_manager.get_data(0, request_small.clone()).await;
         assert!(result.is_ok());
         assert_eq!(consume_receiver(result.unwrap()).await, 930);
 
@@ -199,19 +210,19 @@ mod tests {
         let request_large =
             RequestParams::MockS3((request_path_large_bucket, request_path_large_keys));
 
-        let result = storage_manager.get_data(request_large.clone()).await;
+        let result = storage_manager.get_data(0, request_large.clone()).await;
         assert!(result.is_ok());
         assert_eq!(consume_receiver(result.unwrap()).await, 112193);
 
         // Get data again.
         let mut start_time = Instant::now();
-        let result = storage_manager.get_data(request_large).await;
+        let result = storage_manager.get_data(0, request_large).await;
         assert!(result.is_ok());
         assert_eq!(consume_receiver(result.unwrap()).await, 112193);
         let delta_time_hit_disk = Instant::now() - start_time;
 
         start_time = Instant::now();
-        let result = storage_manager.get_data(request_small).await;
+        let result = storage_manager.get_data(0, request_small).await;
         assert!(result.is_ok());
         assert_eq!(consume_receiver(result.unwrap()).await, 930);
         let delta_time_hit_mem = Instant::now() - start_time;
@@ -249,7 +260,7 @@ mod tests {
         let request_path_keys1 = vec!["userdata1.parquet".to_string()];
         let request_data1 = RequestParams::MockS3((request_path_bucket1, request_path_keys1));
 
-        let result = storage_manager.get_data(request_data1.clone()).await;
+        let result = storage_manager.get_data(0, request_data1.clone()).await;
         assert!(result.is_ok());
         assert_eq!(consume_receiver(result.unwrap()).await, 113629);
 
@@ -257,19 +268,19 @@ mod tests {
         let request_path_keys2 = vec!["userdata2.parquet".to_string()];
         let request_data2 = RequestParams::MockS3((request_path_bucket2, request_path_keys2));
 
-        let result = storage_manager.get_data(request_data2.clone()).await;
+        let result = storage_manager.get_data(0, request_data2.clone()).await;
         assert!(result.is_ok());
         assert_eq!(consume_receiver(result.unwrap()).await, 112193);
 
         // Get data again. Now data2 in memory and data1 in disk.
         let mut start_time = Instant::now();
-        let result = storage_manager.get_data(request_data1).await;
+        let result = storage_manager.get_data(0, request_data1).await;
         assert!(result.is_ok());
         assert_eq!(consume_receiver(result.unwrap()).await, 113629);
         let delta_time_hit_disk = Instant::now() - start_time;
 
         start_time = Instant::now();
-        let result = storage_manager.get_data(request_data2).await;
+        let result = storage_manager.get_data(0, request_data2).await;
         assert!(result.is_ok());
         assert_eq!(consume_receiver(result.unwrap()).await, 112193);
         let delta_time_hit_mem = Instant::now() - start_time;
@@ -308,22 +319,22 @@ mod tests {
         let storage_manager_1 = storage_manager.clone();
         let request_data1_1 = request_data1.clone();
         let get_data_fut_1 =
-            tokio::spawn(async move { storage_manager_1.get_data(request_data1_1).await });
+            tokio::spawn(async move { storage_manager_1.get_data(0, request_data1_1).await });
 
         let storage_manager_2 = storage_manager.clone();
         let request_data1_2 = request_data1.clone();
         let get_data_fut_2 =
-            tokio::spawn(async move { storage_manager_2.get_data(request_data1_2).await });
+            tokio::spawn(async move { storage_manager_2.get_data(0, request_data1_2).await });
 
         let storage_manager_3 = storage_manager.clone();
         let request_data2_3 = request_data2.clone();
         let get_data_fut_3 =
-            tokio::spawn(async move { storage_manager_3.get_data(request_data2_3).await });
+            tokio::spawn(async move { storage_manager_3.get_data(0, request_data2_3).await });
 
         let storage_manager_4 = storage_manager.clone();
         let request_data1_4 = request_data1.clone();
         let get_data_fut_4 =
-            tokio::spawn(async move { storage_manager_4.get_data(request_data1_4).await });
+            tokio::spawn(async move { storage_manager_4.get_data(0, request_data1_4).await });
 
         let result = join!(
             get_data_fut_1,
@@ -371,27 +382,27 @@ mod tests {
         let storage_manager_1 = storage_manager.clone();
         let request_data1_1 = request_data1.clone();
         let get_data_fut_1 =
-            tokio::spawn(async move { storage_manager_1.get_data(request_data1_1).await });
+            tokio::spawn(async move { storage_manager_1.get_data(0, request_data1_1).await });
 
         let storage_manager_2 = storage_manager.clone();
         let request_data1_2 = request_data1.clone();
         let get_data_fut_2 =
-            tokio::spawn(async move { storage_manager_2.get_data(request_data1_2).await });
+            tokio::spawn(async move { storage_manager_2.get_data(0, request_data1_2).await });
 
         let storage_manager_3 = storage_manager.clone();
         let request_data2_3 = request_data2.clone();
         let get_data_fut_3 =
-            tokio::spawn(async move { storage_manager_3.get_data(request_data2_3).await });
+            tokio::spawn(async move { storage_manager_3.get_data(0, request_data2_3).await });
 
         let storage_manager_4 = storage_manager.clone();
         let request_data2_4 = request_data2.clone();
         let get_data_fut_4 =
-            tokio::spawn(async move { storage_manager_4.get_data(request_data2_4).await });
+            tokio::spawn(async move { storage_manager_4.get_data(0, request_data2_4).await });
 
         let storage_manager_5 = storage_manager.clone();
         let request_data1_5 = request_data1.clone();
         let get_data_fut_5 =
-            tokio::spawn(async move { storage_manager_5.get_data(request_data1_5).await });
+            tokio::spawn(async move { storage_manager_5.get_data(0, request_data1_5).await });
 
         let result = join!(
             get_data_fut_1,
@@ -418,27 +429,27 @@ mod tests {
         let storage_manager_1 = storage_manager.clone();
         let request_data2_1 = request_data2.clone();
         let get_data_fut_1 =
-            tokio::spawn(async move { storage_manager_1.get_data(request_data2_1).await });
+            tokio::spawn(async move { storage_manager_1.get_data(0, request_data2_1).await });
 
         let storage_manager_2 = storage_manager.clone();
         let request_data1_2 = request_data1.clone();
         let get_data_fut_2 =
-            tokio::spawn(async move { storage_manager_2.get_data(request_data1_2).await });
+            tokio::spawn(async move { storage_manager_2.get_data(0, request_data1_2).await });
 
         let storage_manager_3 = storage_manager.clone();
         let request_data2_3 = request_data2.clone();
         let get_data_fut_3 =
-            tokio::spawn(async move { storage_manager_3.get_data(request_data2_3).await });
+            tokio::spawn(async move { storage_manager_3.get_data(0, request_data2_3).await });
 
         let storage_manager_4 = storage_manager.clone();
         let request_data1_4 = request_data1.clone();
         let get_data_fut_4 =
-            tokio::spawn(async move { storage_manager_4.get_data(request_data1_4).await });
+            tokio::spawn(async move { storage_manager_4.get_data(0, request_data1_4).await });
 
         let storage_manager_5 = storage_manager.clone();
         let request_data1_5 = request_data1.clone();
         let get_data_fut_5 =
-            tokio::spawn(async move { storage_manager_5.get_data(request_data1_5).await });
+            tokio::spawn(async move { storage_manager_5.get_data(0, request_data1_5).await });
 
         let result = join!(
             get_data_fut_1,
@@ -493,27 +504,27 @@ mod tests {
         let request_path_keys1 = vec!["userdata1.parquet".to_string()];
         let request_data1 = RequestParams::MockS3((request_path_bucket1, request_path_keys1));
 
-        let result = storage_manager.get_data(request_data1.clone()).await;
+        let result = storage_manager.get_data(0, request_data1.clone()).await;
         assert!(result.is_ok());
         assert_eq!(consume_receiver(result.unwrap()).await, 113629);
         let request_path_bucket2 = "tests-parquet".to_string();
         let request_path_keys2 = vec!["userdata2.parquet".to_string()];
         let request_data2 = RequestParams::MockS3((request_path_bucket2, request_path_keys2));
-        let result = storage_manager.get_data(request_data2.clone()).await;
+        let result = storage_manager.get_data(0, request_data2.clone()).await;
         assert!(result.is_ok());
         assert_eq!(consume_receiver(result.unwrap()).await, 112193);
 
         let request_path_bucket3 = "tests-text".to_string();
         let request_path_keys3: Vec<String> = vec!["what-can-i-hold-you-with".to_string()];
         let request_data3 = RequestParams::MockS3((request_path_bucket3, request_path_keys3));
-        let result = storage_manager.get_data(request_data3.clone()).await;
+        let result = storage_manager.get_data(0, request_data3.clone()).await;
         assert!(result.is_ok());
         assert_eq!(consume_receiver(result.unwrap()).await, 930);
 
         let request_path_bucket4 = "tests-parquet".to_string();
         let request_path_keys4: Vec<String> = vec!["small_random_data.parquet".to_string()];
         let request_data4 = RequestParams::MockS3((request_path_bucket4, request_path_keys4));
-        let result = storage_manager.get_data(request_data4.clone()).await;
+        let result = storage_manager.get_data(0, request_data4.clone()).await;
         assert!(result.is_ok());
         assert_eq!(consume_receiver(result.unwrap()).await, 2013);
     }
@@ -555,37 +566,37 @@ mod tests {
         let storage_manager_1 = storage_manager.clone();
         let request_data1_1 = request_data1.clone();
         let get_data_fut_1 =
-            tokio::spawn(async move { storage_manager_1.get_data(request_data1_1).await });
+            tokio::spawn(async move { storage_manager_1.get_data(0, request_data1_1).await });
 
         let storage_manager_2 = storage_manager.clone();
         let request_data1_2 = request_data1.clone();
         let get_data_fut_2 =
-            tokio::spawn(async move { storage_manager_2.get_data(request_data1_2).await });
+            tokio::spawn(async move { storage_manager_2.get_data(0, request_data1_2).await });
 
         let storage_manager_3 = storage_manager.clone();
         let request_data3_3 = request_data3.clone();
         let get_data_fut_3 =
-            tokio::spawn(async move { storage_manager_3.get_data(request_data3_3).await });
+            tokio::spawn(async move { storage_manager_3.get_data(0, request_data3_3).await });
 
         let storage_manager_4 = storage_manager.clone();
         let request_data2_4 = request_data2.clone();
         let get_data_fut_4 =
-            tokio::spawn(async move { storage_manager_4.get_data(request_data2_4).await });
+            tokio::spawn(async move { storage_manager_4.get_data(0, request_data2_4).await });
 
         let storage_manager_5 = storage_manager.clone();
         let request_data2_5 = request_data2.clone();
         let get_data_fut_5 =
-            tokio::spawn(async move { storage_manager_5.get_data(request_data2_5).await });
+            tokio::spawn(async move { storage_manager_5.get_data(0, request_data2_5).await });
 
         let storage_manager_6 = storage_manager.clone();
         let request_data1_6 = request_data1.clone();
         let get_data_fut_6 =
-            tokio::spawn(async move { storage_manager_6.get_data(request_data1_6).await });
+            tokio::spawn(async move { storage_manager_6.get_data(0, request_data1_6).await });
 
         let storage_manager_7 = storage_manager.clone();
         let request_data3_7 = request_data3.clone();
         let get_data_fut_7 =
-            tokio::spawn(async move { storage_manager_7.get_data(request_data3_7).await });
+            tokio::spawn(async move { storage_manager_7.get_data(0, request_data3_7).await });
 
         let result = join!(
             get_data_fut_1,
@@ -636,13 +647,13 @@ mod tests {
         let request_path_keys2 = vec!["userdata1.parquet".to_string()];
         let request_data2 = RequestParams::MockS3((request_path_bucket2, request_path_keys2));
 
-        let res1 = storage_manager.get_data(request_data1.clone()).await;
+        let res1 = storage_manager.get_data(0, request_data1.clone()).await;
         assert!(res1.is_ok());
         assert_eq!(consume_receiver(res1.unwrap()).await, 112193);
-        let res2 = storage_manager.get_data(request_data2.clone()).await;
+        let res2 = storage_manager.get_data(0, request_data2.clone()).await;
         assert!(res2.is_ok());
         assert_eq!(consume_receiver(res2.unwrap()).await, 113629);
-        let res3 = storage_manager.get_data(request_data1.clone()).await;
+        let res3 = storage_manager.get_data(0, request_data1.clone()).await;
         assert!(res3.is_ok());
         assert_eq!(consume_receiver(res3.unwrap()).await, 112193);
     }
@@ -672,13 +683,13 @@ mod tests {
         let request_path_keys2 = vec!["userdata1.parquet".to_string()];
         let request_data2 = RequestParams::MockS3((request_path_bucket2, request_path_keys2));
 
-        let res1 = storage_manager.get_data(request_data1.clone()).await;
+        let res1 = storage_manager.get_data(0, request_data1.clone()).await;
         assert!(res1.is_ok());
         assert_eq!(consume_receiver(res1.unwrap()).await, 112193);
-        let res2 = storage_manager.get_data(request_data2.clone()).await;
+        let res2 = storage_manager.get_data(0, request_data2.clone()).await;
         assert!(res2.is_ok());
         assert_eq!(consume_receiver(res2.unwrap()).await, 113629);
-        let res3 = storage_manager.get_data(request_data1.clone()).await;
+        let res3 = storage_manager.get_data(0, request_data1.clone()).await;
         assert!(res3.is_ok());
         assert_eq!(consume_receiver(res3.unwrap()).await, 112193);
     }

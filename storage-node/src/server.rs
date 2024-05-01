@@ -53,8 +53,9 @@ async fn route(storage_manager: Arc<impl StorageManager + 'static>, ip_addr: &st
                 } else {
                     RequestParams::S3((bucket, vec![keys]))
                 };
+                let request_id = params.request_id;
 
-                let result = storage_manager.get_data(request).await;
+                let result = storage_manager.get_data(request_id, request).await;
                 match result {
                     Ok(data_rx) => {
                         let stream = ReceiverStream::new(data_rx);
@@ -64,8 +65,8 @@ async fn route(storage_manager: Arc<impl StorageManager + 'static>, ip_addr: &st
                             .body(body)
                             .unwrap();
                         info!(
-                            "[Parpulse Timer] request {} for key {} took {:?}",
-                            params.request_id,
+                            "[Parpulse Timer] request {} for key {} takes {:?}",
+                            request_id,
                             info_key,
                             start_time.elapsed()
                         );

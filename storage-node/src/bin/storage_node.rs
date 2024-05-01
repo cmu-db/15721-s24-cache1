@@ -1,5 +1,4 @@
 use clap::Parser;
-use log::info;
 use storage_node::{common::config::ParpulseConfig, server::storage_node_serve};
 
 #[tokio::main]
