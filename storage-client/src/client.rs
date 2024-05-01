@@ -1,6 +1,8 @@
 use anyhow::{anyhow, Ok, Result};
 use arrow::array::RecordBatch;
 use futures::stream::StreamExt;
+use log::info;
+use tokio::sync::mpsc;
 
 use crate::RequestParams;
 use hyper::Uri;
@@ -8,17 +10,17 @@ use lazy_static::lazy_static;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::ProjectionMask;
 use reqwest::{Client, Response, Url};
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
+use std::{collections::HashMap, time::Instant};
 use tempfile::tempdir;
 
-use tokio::sync::mpsc::{channel, Receiver};
+use tokio::sync::mpsc::channel;
 
 use istziio_client::client_api::{StorageClient, StorageRequest, TableId};
 
 /// The batch size for the record batch.
-const BATCH_SIZE: usize = 1024;
+const BATCH_SIZE: usize = 1024 * 8;
 const CHANNEL_CAPACITY: usize = 32;
 const PARAM_BUCKET_KEY: &str = "bucket";
 const PARAM_KEYS_KEY: &str = "keys";
@@ -80,8 +82,16 @@ impl StorageClientImpl {
         Ok(RequestParams::S3((bucket, keys)))
     }
 
-    async fn get_data_from_response(response: Response) -> Result<Receiver<RecordBatch>> {
+    async fn get_data_from_response(
+        response: Response,
+        request: &StorageRequest,
+    ) -> Result<mpsc::Receiver<RecordBatch>> {
+        let table_id = match request {
+            StorageRequest::Table(id) => *id,
+            _ => unimplemented!(),
+        };
         if response.status().is_success() {
+            let poll_data_start = Instant::now();
             // Store the streamed Parquet file in a temporary file.
             // FIXME: 1. Do we really need streaming here?
             //       2. Do we need to store the file in a temporary file?
@@ -93,6 +103,11 @@ impl StorageClientImpl {
                 let chunk = chunk?;
                 file.write_all(&chunk)?;
             }
+            let poll_data_time = poll_data_start.elapsed();
+            info!(
+                "Poll data time for table {}: {:?}",
+                table_id, poll_data_time
+            );
 
             // Convert the Parquet file to a record batch.
             let file = File::open(file_path)?;
@@ -105,10 +120,17 @@ impl StorageClientImpl {
 
             // Return the record batch as a stream.
             tokio::spawn(async move {
+                let decode_start = Instant::now();
                 while let Some(core::result::Result::Ok(rb)) = reader.next() {
                     tx.send(rb).await.unwrap();
                 }
+                let decode_time = decode_start.elapsed();
+                info!(
+                    "Client decoding time for table {}: {:?}",
+                    table_id, decode_time
+                );
             });
+
             Ok(rx)
         } else {
             Err(anyhow::anyhow!(
@@ -165,9 +187,9 @@ impl StorageClientImpl {
     pub async fn request_data_test(
         &self,
         request: StorageRequest,
-    ) -> Result<Receiver<RecordBatch>> {
+    ) -> Result<mpsc::Receiver<RecordBatch>> {
         // First we need to get the location of the parquet file from the catalog server.
-        let location = match self.get_info_from_catalog_test(request).await? {
+        let location = match self.get_info_from_catalog_test(request.clone()).await? {
             RequestParams::MockS3(location) => location,
             _ => {
                 return Err(anyhow!(
@@ -184,15 +206,15 @@ impl StorageClientImpl {
         let url = Url::parse_with_params(&url, params)?;
         let response = client.get(url).send().await?;
 
-        Self::get_data_from_response(response).await
+        Self::get_data_from_response(response, &request).await
     }
 }
 
 #[async_trait::async_trait]
 impl StorageClient for StorageClientImpl {
-    async fn request_data(&self, request: StorageRequest) -> Result<Receiver<RecordBatch>> {
+    async fn request_data(&self, request: StorageRequest) -> Result<mpsc::Receiver<RecordBatch>> {
         // First we need to get the location of the parquet file from the catalog server.
-        let location = match self.get_info_from_catalog(request).await? {
+        let location = match self.get_info_from_catalog(request.clone()).await? {
             RequestParams::S3(location) => location,
             _ => {
                 return Err(anyhow!(
@@ -206,7 +228,7 @@ impl StorageClient for StorageClientImpl {
         let (url, params) = self.get_request_url_and_params(location)?;
         let url = Url::parse_with_params(&url, params)?;
         let response = client.get(url).send().await?;
-        Self::get_data_from_response(response).await
+        Self::get_data_from_response(response, &request).await
     }
 
     // TODO (kunle): I don't think this function is necessary.
