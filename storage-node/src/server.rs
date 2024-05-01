@@ -17,7 +17,7 @@ use crate::{
 
 const CACHE_BASE_PATH: &str = "parpulse-cache";
 const DEFAULT_DATA_STORE_CACHE_NUM: usize = 3;
-const DEFAULT_MEM_CACHE_SIZE: usize = 100 * 1024;
+const DEFAULT_MEM_CACHE_SIZE: usize = 200 * 1024 * 1024;
 const DEFAULT_DISK_CACHE_SIZE: usize = 1024 * 1024 * 1024;
 const DEFAULT_SQLITE_CACHE_SIZE: usize = 200 * 1024 * 1024;
 const DEFAULT_MEM_CACHE_MAX_FILE_SIZE: usize = 10 * 1024 * 1024 + 1;
