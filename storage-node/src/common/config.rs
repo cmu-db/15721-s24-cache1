@@ -34,6 +34,9 @@ pub struct ParpulseConfig {
     pub mem_cache_size: Option<usize>,
 
     #[clap(long, default_value = None)]
+    pub mem_cache_file_size: Option<usize>,
+
+    #[clap(long, default_value = None)]
     pub disk_cache_size: Option<usize>,
 
     #[clap(long, default_value = None)]

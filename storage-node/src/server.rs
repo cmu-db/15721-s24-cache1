@@ -111,10 +111,13 @@ pub async fn storage_node_serve(
         ParpulseConfigDataStore::Memdisk => {
             let disk_cache_size = config.disk_cache_size.unwrap_or(DEFAULT_DISK_CACHE_SIZE);
             let mem_cache_size = config.mem_cache_size.unwrap_or(DEFAULT_MEM_CACHE_SIZE);
+            let mem_cache_file_size = config
+                .mem_cache_file_size
+                .unwrap_or(DEFAULT_MEM_CACHE_MAX_FILE_SIZE);
             let cache_base_path = config.cache_path.unwrap_or(CACHE_BASE_PATH.to_string());
             match config.cache_policy {
                 ParpulseConfigCachePolicy::Lru => {
-                    info!("starting storage node with {} mem-disk cache(s) and LRU cache policy, disk cache size: {}, mem cache size: {}", data_store_cache_num, disk_cache_size, mem_cache_size);
+                    info!("starting storage node with {} mem-disk cache(s) and LRU cache policy, disk cache size: {}, mem cache size: {}, mem cache file size: {}", data_store_cache_num, disk_cache_size, mem_cache_size, mem_cache_file_size);
                     let mut data_store_caches = Vec::new();
                     for i in 0..data_store_cache_num {
                         let disk_replacer = LruReplacer::new(disk_cache_size);
@@ -123,7 +126,7 @@ pub async fn storage_node_serve(
                             disk_replacer,
                             i.to_string() + &cache_base_path,
                             Some(mem_replacer),
-                            Some(DEFAULT_MEM_CACHE_MAX_FILE_SIZE),
+                            Some(mem_cache_file_size),
                         );
                         data_store_caches.push(data_store_cache);
                     }
@@ -131,7 +134,7 @@ pub async fn storage_node_serve(
                     route(storage_manager, false, ip_addr, port).await;
                 }
                 ParpulseConfigCachePolicy::Lruk => {
-                    info!("starting storage node with {} mem-disk cache(s) and LRU-K cache policy, disk cache size: {}, mem cache size: {}", data_store_cache_num, disk_cache_size, mem_cache_size);
+                    info!("starting storage node with {} mem-disk cache(s) and LRU-K cache policy, disk cache size: {}, mem cache size: {}, mem cache file size: {}", data_store_cache_num, disk_cache_size, mem_cache_size, mem_cache_file_size);
                     let mut data_store_caches = Vec::new();
                     let k = config.cache_lru_k.unwrap_or(DEFAULT_LRU_K_VALUE);
                     for i in 0..data_store_cache_num {
@@ -141,7 +144,7 @@ pub async fn storage_node_serve(
                             disk_replacer,
                             i.to_string() + &cache_base_path,
                             Some(mem_replacer),
-                            Some(DEFAULT_MEM_CACHE_MAX_FILE_SIZE),
+                            Some(mem_cache_file_size),
                         );
                         data_store_caches.push(data_store_cache);
                     }
@@ -234,7 +237,6 @@ pub async fn storage_node_serve(
 
 #[cfg(test)]
 mod tests {
-    use crate::common::config::ParpulseConfigDataStore;
 
     use super::*;
     use reqwest::Client;
@@ -246,17 +248,8 @@ mod tests {
     #[tokio::test]
     async fn test_server() {
         let original_file_path = "tests/parquet/userdata1.parquet";
-        let config = ParpulseConfig {
-            data_store: ParpulseConfigDataStore::Memdisk,
-            data_store_cache_num: Some(6),
-            mem_cache_size: None,
-            disk_cache_size: None,
-            cache_path: None,
-            cache_policy: ParpulseConfigCachePolicy::Lru,
-            cache_lru_k: None,
-            sqlite_cache_size: None,
-        };
-
+        let mut config = ParpulseConfig::default();
+        config.data_store_cache_num = Some(6);
         // Start the server
         let server_handle = tokio::spawn(async move {
             storage_node_serve("127.0.0.1", 3030, config).await.unwrap();

@@ -602,7 +602,7 @@ mod tests {
             LruReplacer::new(1024 * 512),
             disk_base_path.to_str().unwrap().to_string(),
             Some(LruReplacer::new(950)),
-            None,
+            Some(10 * 1024),
         );
         let bucket = "tests-text".to_string();
         let keys = vec!["what-can-i-hold-you-with".to_string()];
