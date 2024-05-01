@@ -1,27 +1,31 @@
 use anyhow::{anyhow, Ok, Result};
 use arrow::array::RecordBatch;
 use futures::stream::StreamExt;
+use log::info;
+use tokio::sync::mpsc;
 
 use crate::RequestParams;
 use hyper::Uri;
+use istziio_client::client_api::RequestId;
 use lazy_static::lazy_static;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::ProjectionMask;
 use reqwest::{Client, Response, Url};
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
+use std::{collections::HashMap, time::Instant};
 use tempfile::tempdir;
 
-use tokio::sync::mpsc::{channel, Receiver};
+use tokio::sync::mpsc::channel;
 
 use istziio_client::client_api::{DataRequest, StorageClient, StorageRequest, TableId};
 
 /// The batch size for the record batch.
-const BATCH_SIZE: usize = 1024;
+const BATCH_SIZE: usize = 1024 * 8;
 const CHANNEL_CAPACITY: usize = 32;
 const PARAM_BUCKET_KEY: &str = "bucket";
 const PARAM_KEYS_KEY: &str = "keys";
+const PARAM_REQUEST_ID_KEY: &str = "request-id";
 
 lazy_static! {
     static ref TABLE_FILE_MAP: HashMap<TableId, String> = {
@@ -80,8 +84,12 @@ impl StorageClientImpl {
         Ok(RequestParams::S3((bucket, keys)))
     }
 
-    async fn get_data_from_response(response: Response) -> Result<Receiver<RecordBatch>> {
+    async fn get_data_from_response(
+        response: Response,
+        request_id: RequestId,
+    ) -> Result<mpsc::Receiver<RecordBatch>> {
         if response.status().is_success() {
+            let poll_data_start = Instant::now();
             // Store the streamed Parquet file in a temporary file.
             // FIXME: 1. Do we really need streaming here?
             //       2. Do we need to store the file in a temporary file?
@@ -93,6 +101,11 @@ impl StorageClientImpl {
                 let chunk = chunk?;
                 file.write_all(&chunk)?;
             }
+            let poll_data_time = poll_data_start.elapsed();
+            info!(
+                "[Parpulse Timer] client pull data time for request {}: {:?}",
+                request_id, poll_data_time
+            );
 
             // Convert the Parquet file to a record batch.
             let file = File::open(file_path)?;
@@ -105,10 +118,17 @@ impl StorageClientImpl {
 
             // Return the record batch as a stream.
             tokio::spawn(async move {
+                let decode_start = Instant::now();
                 while let Some(core::result::Result::Ok(rb)) = reader.next() {
                     tx.send(rb).await.unwrap();
                 }
+                let decode_time = decode_start.elapsed();
+                info!(
+                    "[Parpulse Timer] client decode time for request {}: {:?}",
+                    request_id, decode_time
+                );
             });
+
             Ok(rx)
         } else {
             Err(anyhow::anyhow!(
@@ -137,6 +157,7 @@ impl StorageClientImpl {
     fn get_request_url_and_params(
         &self,
         location: (String, Vec<String>),
+        request_id: RequestId,
     ) -> Result<(String, Vec<(&str, String)>)> {
         let scheme = self
             .storage_server_endpoint
@@ -158,6 +179,7 @@ impl StorageClientImpl {
         let params = vec![
             (PARAM_BUCKET_KEY, location.0),
             (PARAM_KEYS_KEY, location.1.join(",")),
+            (PARAM_REQUEST_ID_KEY, request_id.to_string()),
         ];
         Ok((url.to_string(), params))
     }
@@ -165,7 +187,8 @@ impl StorageClientImpl {
     pub async fn request_data_test(
         &self,
         request: StorageRequest,
-    ) -> Result<Receiver<RecordBatch>> {
+    ) -> Result<mpsc::Receiver<RecordBatch>> {
+        let request_id = request.request_id();
         // First we need to get the location of the parquet file from the catalog server.
         let location = match self.get_info_from_catalog_test(request).await? {
             RequestParams::MockS3(location) => location,
@@ -178,21 +201,22 @@ impl StorageClientImpl {
 
         // Then we need to send the request to the storage server.
         let client = Client::new();
-        let (url, mut params) = self.get_request_url_and_params(location)?;
+        let (url, mut params) = self.get_request_url_and_params(location, request_id)?;
         params.push(("is_test", "true".to_owned()));
 
         let url = Url::parse_with_params(&url, params)?;
         let response = client.get(url).send().await?;
 
-        Self::get_data_from_response(response).await
+        Self::get_data_from_response(response, request_id).await
     }
 }
 
 #[async_trait::async_trait]
 impl StorageClient for StorageClientImpl {
-    async fn request_data(&self, request: StorageRequest) -> Result<Receiver<RecordBatch>> {
+    async fn request_data(&self, request: StorageRequest) -> Result<mpsc::Receiver<RecordBatch>> {
+        let request_id = request.request_id();
         // First we need to get the location of the parquet file from the catalog server.
-        let location = match self.get_info_from_catalog(request).await? {
+        let location = match self.get_info_from_catalog(request.clone()).await? {
             RequestParams::S3(location) => location,
             _ => {
                 return Err(anyhow!(
@@ -203,10 +227,17 @@ impl StorageClient for StorageClientImpl {
 
         // Then we need to send the request to the storage server.
         let client = Client::new();
-        let (url, params) = self.get_request_url_and_params(location)?;
+        let (url, params) = self.get_request_url_and_params(location, request_id)?;
         let url = Url::parse_with_params(&url, params)?;
+        let get_response_start = Instant::now();
         let response = client.get(url).send().await?;
-        Self::get_data_from_response(response).await
+        let get_response_time = get_response_start.elapsed();
+        info!(
+            "[Parpulse Timer] client get response time for request {}: {:?}",
+            request_id, get_response_time
+        );
+
+        Self::get_data_from_response(response, request_id).await
     }
 
     // TODO (kunle): I don't think this function is necessary.
