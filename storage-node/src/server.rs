@@ -1,6 +1,7 @@
 use log::{info, warn};
 use parpulse_client::{RequestParams, S3Request};
 use std::sync::Arc;
+use std::time::Instant;
 use std::{net::IpAddr, sync::Mutex};
 use tokio_stream::wrappers::ReceiverStream;
 use warp::{Filter, Rejection};
@@ -42,6 +43,7 @@ pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> 
         .and(warp::path::end())
         .and(warp::query::<S3Request>())
         .and_then(move |params: S3Request| {
+            let start_time = Instant::now();
             let storage_manager = storage_manager.clone();
             if params.is_test {
                 info!(
@@ -57,6 +59,7 @@ pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> 
             async move {
                 let bucket = params.bucket;
                 let keys = params.keys;
+                let info_key = bucket.clone() + "/" + &keys;
                 let request = if params.is_test {
                     RequestParams::MockS3((bucket, vec![keys]))
                 } else {
@@ -71,6 +74,11 @@ pub async fn storage_node_serve(ip_addr: &str, port: u16) -> ParpulseResult<()> 
                             .header("Content-Type", "text/plain")
                             .body(body)
                             .unwrap();
+                        info!(
+                            "Request for key {} took: {:?}",
+                            info_key,
+                            start_time.elapsed()
+                        );
                         Ok::<_, Rejection>(warp::reply::with_status(
                             response,
                             warp::http::StatusCode::OK,
