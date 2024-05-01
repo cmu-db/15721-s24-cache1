@@ -27,7 +27,7 @@ pub trait AsyncStorageReader {
     ///
     /// NEVER call this method if you do not know the size of the data -- collecting
     /// all data into one buffer might lead to OOM.
-    async fn read_all(&self) -> ParpulseResult<Bytes>;
+    async fn read_all(&self) -> ParpulseResult<Vec<Bytes>>;
 
     /// Read data from the underlying storage as a stream.
     async fn into_stream(self) -> ParpulseResult<StorageReaderStream>;

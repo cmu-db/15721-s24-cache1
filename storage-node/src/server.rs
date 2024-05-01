@@ -18,17 +18,12 @@ use crate::{
 const CACHE_BASE_PATH: &str = "parpulse-cache";
 const DEFAULT_DATA_STORE_CACHE_NUM: usize = 3;
 const DEFAULT_MEM_CACHE_SIZE: usize = 100 * 1024;
-const DEFAULT_DISK_CACHE_SIZE: usize = 100 * 1024 * 1024;
-const DEFAULT_SQLITE_CACHE_SIZE: usize = 100 * 1024 * 1024;
-const DEFAULT_MEM_CACHE_MAX_FILE_SIZE: usize = 10 * 1024;
+const DEFAULT_DISK_CACHE_SIZE: usize = 1024 * 1024 * 1024;
+const DEFAULT_SQLITE_CACHE_SIZE: usize = 200 * 1024 * 1024;
+const DEFAULT_MEM_CACHE_MAX_FILE_SIZE: usize = 10 * 1024 * 1024 + 1;
 const DEFAULT_LRU_K_VALUE: usize = 2;
 
-async fn route(
-    storage_manager: Arc<impl StorageManager + 'static>,
-    get_size_before_read: bool,
-    ip_addr: &str,
-    port: u16,
-) {
+async fn route(storage_manager: Arc<impl StorageManager + 'static>, ip_addr: &str, port: u16) {
     let route = warp::path!("file")
         .and(warp::path::end())
         .and(warp::query::<S3Request>())
@@ -53,9 +48,8 @@ async fn route(
                 } else {
                     RequestParams::S3((bucket, vec![keys]))
                 };
-                let result = storage_manager
-                    .get_data(request, !get_size_before_read)
-                    .await;
+
+                let result = storage_manager.get_data(request).await;
                 match result {
                     Ok(data_rx) => {
                         let stream = ReceiverStream::new(data_rx);
@@ -131,7 +125,7 @@ pub async fn storage_node_serve(
                         data_store_caches.push(data_store_cache);
                     }
                     let storage_manager = Arc::new(StorageManagerImpl::new(data_store_caches));
-                    route(storage_manager, false, ip_addr, port).await;
+                    route(storage_manager, ip_addr, port).await;
                 }
                 ParpulseConfigCachePolicy::Lruk => {
                     info!("starting storage node with {} mem-disk cache(s) and LRU-K cache policy, disk cache size: {}, mem cache size: {}, mem cache file size: {}", data_store_cache_num, disk_cache_size, mem_cache_size, mem_cache_file_size);
@@ -149,7 +143,7 @@ pub async fn storage_node_serve(
                         data_store_caches.push(data_store_cache);
                     }
                     let storage_manager = Arc::new(StorageManagerImpl::new(data_store_caches));
-                    route(storage_manager, false, ip_addr, port).await;
+                    route(storage_manager, ip_addr, port).await;
                 }
             };
         }
@@ -171,7 +165,7 @@ pub async fn storage_node_serve(
                         data_store_caches.push(data_store_cache);
                     }
                     let storage_manager = Arc::new(StorageManagerImpl::new(data_store_caches));
-                    route(storage_manager, false, ip_addr, port).await;
+                    route(storage_manager, ip_addr, port).await;
                 }
                 ParpulseConfigCachePolicy::Lruk => {
                     info!("starting storage node with {} disk-only cache(s) and LRU-K cache policy, disk cache size: {}", data_store_cache_num, disk_cache_size);
@@ -188,7 +182,7 @@ pub async fn storage_node_serve(
                         data_store_caches.push(data_store_cache);
                     }
                     let storage_manager = Arc::new(StorageManagerImpl::new(data_store_caches));
-                    route(storage_manager, false, ip_addr, port).await;
+                    route(storage_manager, ip_addr, port).await;
                 }
             }
         }
@@ -210,7 +204,7 @@ pub async fn storage_node_serve(
                         data_store_caches.push(sqlite_data_cache);
                     }
                     let storage_manager = Arc::new(StorageManagerImpl::new(data_store_caches));
-                    route(storage_manager, true, ip_addr, port).await;
+                    route(storage_manager, ip_addr, port).await;
                 }
                 ParpulseConfigCachePolicy::Lruk => {
                     info!("starting storage node with {} sqlite cache(s) and LRU-K cache policy, cache size: {}", data_store_cache_num, sqlite_cache_size);
@@ -226,7 +220,7 @@ pub async fn storage_node_serve(
                         data_store_caches.push(sqlite_data_cache);
                     }
                     let storage_manager = Arc::new(StorageManagerImpl::new(data_store_caches));
-                    route(storage_manager, true, ip_addr, port).await;
+                    route(storage_manager, ip_addr, port).await;
                 }
             }
         }
@@ -246,6 +240,7 @@ mod tests {
 
     /// WARNING: Put userdata1.parquet in the storage-node/tests/parquet directory before running this test.
     #[tokio::test]
+    #[allow(clippy::field_reassign_with_default)]
     async fn test_server() {
         let original_file_path = "tests/parquet/userdata1.parquet";
         let mut config = ParpulseConfig::default();
