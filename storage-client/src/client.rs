@@ -17,7 +17,7 @@ use tempfile::tempdir;
 
 use tokio::sync::mpsc::channel;
 
-use istziio_client::client_api::{StorageClient, StorageRequest, TableId};
+use istziio_client::client_api::{DataRequest, StorageClient, StorageRequest, TableId};
 
 /// The batch size for the record batch.
 const BATCH_SIZE: usize = 1024 * 8;
@@ -72,8 +72,8 @@ impl StorageClientImpl {
     /// Returns the physical location of the requested data in RequestParams.
     async fn get_info_from_catalog(&self, request: StorageRequest) -> Result<RequestParams> {
         let bucket = "parpulse-test".to_string();
-        let table_id = match request {
-            StorageRequest::Table(id) => id,
+        let table_id = match request.data_request() {
+            DataRequest::Table(id) => *id,
             _ => {
                 return Err(anyhow!("Only table request is supported."));
             }
@@ -146,13 +146,13 @@ impl StorageClientImpl {
 
     async fn get_info_from_catalog_test(&self, request: StorageRequest) -> Result<RequestParams> {
         let bucket = "tests-parquet".to_string();
-        let table_id = match request {
-            StorageRequest::Table(id) => id,
+        let table_id = match request.data_request() {
+            DataRequest::Table(id) => id,
             _ => {
                 return Err(anyhow!("Only table request is supported."));
             }
         };
-        let keys = vec![TABLE_FILE_MAP.get(&table_id).unwrap().to_string()];
+        let keys = vec![TABLE_FILE_MAP.get(table_id).unwrap().to_string()];
         Ok(RequestParams::MockS3((bucket, keys)))
     }
 
@@ -262,7 +262,7 @@ mod tests {
         let storage_client = StorageClientImpl::new(&server_endpoint, "localhost:3031")
             .expect("Failed to create storage client.");
         // 0 is the table id for userdata1.parquet on local disk.
-        let request = StorageRequest::Table(0);
+        let request = StorageRequest::new(0, DataRequest::Table(0));
         let mut receiver = storage_client
             .request_data_test(request)
             .await
