@@ -1,5 +1,5 @@
 use arrow::array::Float64Array;
-use istziio_client::client_api::{StorageClient, StorageRequest};
+use istziio_client::client_api::{DataRequest, StorageClient, StorageRequest};
 use log::info;
 use parpulse_client::client::StorageClientImpl;
 use std::time::Instant;
@@ -20,7 +20,7 @@ async fn main() {
         .expect("Failed to create storage client.");
     let start_time = Instant::now();
     // Requesting random_data_100m_0.parquet
-    let request = StorageRequest::Table(10);
+    let request = StorageRequest::new(0, DataRequest::Table(10));
     let mut receiver = storage_client
         .request_data(request)
         .await
