@@ -6,90 +6,29 @@ use tokio_stream::wrappers::ReceiverStream;
 use warp::{Filter, Rejection};
 
 use crate::{
-    cache::{data_store_cache::memdisk::{MemDiskStoreCache, MemDiskStoreReplacerValue}, replacer::{lru::LruReplacer, lru_k::LruKReplacer, DataStoreReplacer}},
+    cache::{
+        data_store_cache::{memdisk::MemDiskStoreCache, sqlite::SqliteStoreCache},
+        replacer::{lru::LruReplacer, lru_k::LruKReplacer},
+    },
     common::config::{ParpulseConfig, ParpulseConfigCachePolicy, ParpulseConfigDataStore},
-    error::{ParpulseError, ParpulseResult},
-    storage_manager::StorageManager,
+    error::ParpulseResult,
+    storage_manager::{StorageManager, StorageManagerImpl},
 };
 
 const CACHE_BASE_PATH: &str = "parpulse-cache";
-const DATA_STORE_CACHE_NUMBER: usize = 3;
+const DEFAULT_DATA_STORE_CACHE_NUM: usize = 3;
 const DEFAULT_MEM_CACHE_SIZE: usize = 100 * 1024;
 const DEFAULT_DISK_CACHE_SIZE: usize = 100 * 1024 * 1024;
+const DEFAULT_SQLITE_CACHE_SIZE: usize = 100 * 1024 * 1024;
 const DEFAULT_MEM_CACHE_MAX_FILE_SIZE: usize = 10 * 1024;
 const DEFAULT_LRU_K_VALUE: usize = 2;
 
-pub async fn storage_node_serve(
+async fn route(
+    storage_manager: Arc<impl StorageManager + 'static>,
+    get_size_before_read: bool,
     ip_addr: &str,
     port: u16,
-    config: ParpulseConfig,
-) -> ParpulseResult<()> {
-    // Should at least be able to store one 100MB file in the cache.
-    // TODO: Read the type of the cache from config.
-
-    
-    let storage_manager = match config.data_store {
-        ParpulseConfigDataStore::Memdisk => {
-            let disk_cache_size = config.disk_cache_size.unwrap_or(DEFAULT_DISK_CACHE_SIZE);
-            let mem_cache_size = config.mem_cache_size.unwrap_or(DEFAULT_MEM_CACHE_SIZE);
-            let cache_base_path = config.cache_path.unwrap_or(CACHE_BASE_PATH.to_string());
-            for i in 0..config.data_store_cache_num {
-                match config.cache_policy {
-                    ParpulseConfigCachePolicy::Lru => {
-                        let mut data_store_caches = Vec::new();
-                        let disk_replacer = LruReplacer::new(disk_cache_size);
-                        let mem_replacer = LruReplacer::new(mem_cache_size);
-                        let data_store_cache = MemDiskStoreCache::new(
-                            disk_replacer,
-                            i.to_string() + &cache_base_path,
-                            Some(mem_replacer),
-                            Some(DEFAULT_MEM_CACHE_MAX_FILE_SIZE),
-                        );
-                        data_store_caches.push(data_store_cache);
-                        Arc::new(StorageManager::new(data_store_caches))
-                    },
-                   ParpulseConfigCachePolicy::Lruk => {
-                    let mut data_store_caches = Vec::new();
-                    let k = config.cache_lru_k.unwrap_or(DEFAULT_LRU_K_VALUE);
-                    let disk_replacer = LruKReplacer::new(disk_cache_size, k);
-                    let mem_replacer = LruKReplacer::new(mem_cache_size, k);
-                    let data_store_cache = MemDiskStoreCache::new(
-                        disk_replacer,
-                        i.to_string() + &cache_base_path,
-                        Some(mem_replacer),
-                        Some(DEFAULT_MEM_CACHE_MAX_FILE_SIZE),
-                    );
-                    data_store_caches.push(data_store_cache);
-                    Arc::new(StorageManager::new(data_store_caches))
-                }
-                } ;
-
-            }
-        }
-        ParpulseConfigDataStore::Disk => {
-            let disk_cache_size = config.disk_cache_size.ok_or(ParpulseError::MissingConfig("disk-cache-size".to_string()))?;
-        },
-        ParpulseConfigDataStore::Sqlite => {
-            todo!();
-        }
-    }
-
-    for i in 0..DATA_STORE_CACHE_NUMBER {
-        let disk_replacer = LruReplacer::new(dummy_size_per_disk_cache);
-        let mem_replace = LruReplacer::new(dummy_size_per_mem_cache);
-        let data_store_cache = MemDiskStoreCache::new(
-            disk_replacer,
-            i.to_string() + CACHE_BASE_PATH,
-            Some(mem_replace),
-            Some(dummy_mem_max_file_cache),
-        );
-        data_store_caches.push(data_store_cache);
-    }
-
-    let is_mem_disk_cache = true;
-    // TODO: try to use more fine-grained lock instead of locking the whole storage_manager
-    let storage_manager =;
-
+) {
     let route = warp::path!("file")
         .and(warp::path::end())
         .and(warp::query::<S3Request>())
@@ -114,7 +53,9 @@ pub async fn storage_node_serve(
                 } else {
                     RequestParams::S3((bucket, vec![keys]))
                 };
-                let result = storage_manager.get_data(request, is_mem_disk_cache).await;
+                let result = storage_manager
+                    .get_data(request, !get_size_before_read)
+                    .await;
                 match result {
                     Ok(data_rx) => {
                         let stream = ReceiverStream::new(data_rx);
@@ -156,6 +97,137 @@ pub async fn storage_node_serve(
     let routes = route.or(heartbeat).or(catch_all);
     let ip_addr: IpAddr = ip_addr.parse().unwrap();
     warp::serve(routes).run((ip_addr, port)).await;
+}
+
+pub async fn storage_node_serve(
+    ip_addr: &str,
+    port: u16,
+    config: ParpulseConfig,
+) -> ParpulseResult<()> {
+    let data_store_cache_num = config
+        .data_store_cache_num
+        .unwrap_or(DEFAULT_DATA_STORE_CACHE_NUM);
+    match config.data_store {
+        ParpulseConfigDataStore::Memdisk => {
+            let disk_cache_size = config.disk_cache_size.unwrap_or(DEFAULT_DISK_CACHE_SIZE);
+            let mem_cache_size = config.mem_cache_size.unwrap_or(DEFAULT_MEM_CACHE_SIZE);
+            let cache_base_path = config.cache_path.unwrap_or(CACHE_BASE_PATH.to_string());
+            match config.cache_policy {
+                ParpulseConfigCachePolicy::Lru => {
+                    info!("starting storage node with {} mem-disk cache(s) and LRU cache policy, disk cache size: {}, mem cache size: {}", data_store_cache_num, disk_cache_size, mem_cache_size);
+                    let mut data_store_caches = Vec::new();
+                    for i in 0..data_store_cache_num {
+                        let disk_replacer = LruReplacer::new(disk_cache_size);
+                        let mem_replacer = LruReplacer::new(mem_cache_size);
+                        let data_store_cache = MemDiskStoreCache::new(
+                            disk_replacer,
+                            i.to_string() + &cache_base_path,
+                            Some(mem_replacer),
+                            Some(DEFAULT_MEM_CACHE_MAX_FILE_SIZE),
+                        );
+                        data_store_caches.push(data_store_cache);
+                    }
+                    let storage_manager = Arc::new(StorageManagerImpl::new(data_store_caches));
+                    route(storage_manager, false, ip_addr, port).await;
+                }
+                ParpulseConfigCachePolicy::Lruk => {
+                    info!("starting storage node with {} mem-disk cache(s) and LRU-K cache policy, disk cache size: {}, mem cache size: {}", data_store_cache_num, disk_cache_size, mem_cache_size);
+                    let mut data_store_caches = Vec::new();
+                    let k = config.cache_lru_k.unwrap_or(DEFAULT_LRU_K_VALUE);
+                    for i in 0..data_store_cache_num {
+                        let disk_replacer = LruKReplacer::new(disk_cache_size, k);
+                        let mem_replacer = LruKReplacer::new(mem_cache_size, k);
+                        let data_store_cache = MemDiskStoreCache::new(
+                            disk_replacer,
+                            i.to_string() + &cache_base_path,
+                            Some(mem_replacer),
+                            Some(DEFAULT_MEM_CACHE_MAX_FILE_SIZE),
+                        );
+                        data_store_caches.push(data_store_cache);
+                    }
+                    let storage_manager = Arc::new(StorageManagerImpl::new(data_store_caches));
+                    route(storage_manager, false, ip_addr, port).await;
+                }
+            };
+        }
+        ParpulseConfigDataStore::Disk => {
+            let disk_cache_size = config.disk_cache_size.unwrap_or(DEFAULT_DISK_CACHE_SIZE);
+            let cache_base_path = config.cache_path.unwrap_or(CACHE_BASE_PATH.to_string());
+            match config.cache_policy {
+                ParpulseConfigCachePolicy::Lru => {
+                    info!("starting storage node with {} disk-only cache(s) and LRU cache policy, disk cache size: {}", data_store_cache_num, disk_cache_size);
+                    let mut data_store_caches = Vec::new();
+                    for i in 0..data_store_cache_num {
+                        let disk_replacer = LruReplacer::new(disk_cache_size);
+                        let data_store_cache = MemDiskStoreCache::new(
+                            disk_replacer,
+                            i.to_string() + &cache_base_path,
+                            None,
+                            None,
+                        );
+                        data_store_caches.push(data_store_cache);
+                    }
+                    let storage_manager = Arc::new(StorageManagerImpl::new(data_store_caches));
+                    route(storage_manager, false, ip_addr, port).await;
+                }
+                ParpulseConfigCachePolicy::Lruk => {
+                    info!("starting storage node with {} disk-only cache(s) and LRU-K cache policy, disk cache size: {}", data_store_cache_num, disk_cache_size);
+                    let mut data_store_caches = Vec::new();
+                    let k = config.cache_lru_k.unwrap_or(DEFAULT_LRU_K_VALUE);
+                    for i in 0..data_store_cache_num {
+                        let disk_replacer = LruKReplacer::new(disk_cache_size, k);
+                        let data_store_cache = MemDiskStoreCache::new(
+                            disk_replacer,
+                            i.to_string() + &cache_base_path,
+                            None,
+                            None,
+                        );
+                        data_store_caches.push(data_store_cache);
+                    }
+                    let storage_manager = Arc::new(StorageManagerImpl::new(data_store_caches));
+                    route(storage_manager, false, ip_addr, port).await;
+                }
+            }
+        }
+        ParpulseConfigDataStore::Sqlite => {
+            let sqlite_base_path =
+                config.cache_path.unwrap_or(CACHE_BASE_PATH.to_string()) + "sqlite.db3";
+            let sqlite_cache_size = config.mem_cache_size.unwrap_or(DEFAULT_SQLITE_CACHE_SIZE);
+            match config.cache_policy {
+                ParpulseConfigCachePolicy::Lru => {
+                    info!("starting storage node with {} sqlite cache(s) and LRU cache policy, cache size: {}", data_store_cache_num, sqlite_cache_size);
+                    let mut data_store_caches = Vec::new();
+                    for i in 0..data_store_cache_num {
+                        let replacer = LruReplacer::new(sqlite_cache_size);
+                        let sqlite_data_cache = SqliteStoreCache::new(
+                            replacer,
+                            i.to_string() + &sqlite_base_path,
+                            None,
+                        )?;
+                        data_store_caches.push(sqlite_data_cache);
+                    }
+                    let storage_manager = Arc::new(StorageManagerImpl::new(data_store_caches));
+                    route(storage_manager, true, ip_addr, port).await;
+                }
+                ParpulseConfigCachePolicy::Lruk => {
+                    info!("starting storage node with {} sqlite cache(s) and LRU-K cache policy, cache size: {}", data_store_cache_num, sqlite_cache_size);
+                    let k = config.cache_lru_k.unwrap_or(DEFAULT_LRU_K_VALUE);
+                    let mut data_store_caches = Vec::new();
+                    for i in 0..data_store_cache_num {
+                        let replacer = LruKReplacer::new(sqlite_cache_size, k);
+                        let sqlite_data_cache = SqliteStoreCache::new(
+                            replacer,
+                            i.to_string() + &sqlite_base_path,
+                            None,
+                        )?;
+                        data_store_caches.push(sqlite_data_cache);
+                    }
+                    let storage_manager = Arc::new(StorageManagerImpl::new(data_store_caches));
+                    route(storage_manager, true, ip_addr, port).await;
+                }
+            }
+        }
+    };
 
     Ok(())
 }
@@ -176,15 +248,18 @@ mod tests {
         let original_file_path = "tests/parquet/userdata1.parquet";
         let config = ParpulseConfig {
             data_store: ParpulseConfigDataStore::Memdisk,
-            data_store_cache_num: todo!(),
-            mem_cache_size: todo!(),
-            disk_cache_size: todo!(),
-            cache_path: todo!(),
-        }
+            data_store_cache_num: Some(6),
+            mem_cache_size: None,
+            disk_cache_size: None,
+            cache_path: None,
+            cache_policy: ParpulseConfigCachePolicy::Lru,
+            cache_lru_k: None,
+            sqlite_cache_size: None,
+        };
 
         // Start the server
         let server_handle = tokio::spawn(async move {
-            storage_node_serve("127.0.0.1", 3030).await.unwrap();
+            storage_node_serve("127.0.0.1", 3030, config).await.unwrap();
         });
 
         // Give the server some time to start

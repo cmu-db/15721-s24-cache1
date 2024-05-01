@@ -1,28 +1,37 @@
 use crate::{
-    cache::{data_store_cache::DataStoreCache, replacer::ParpulseDataStoreReplacer},
+    cache::data_store_cache::DataStoreCache,
     common::hash::calculate_hash_crc32fast,
     error::ParpulseResult,
     storage_reader::{s3::S3Reader, s3_diskmock::MockS3Reader, AsyncStorageReader},
 };
 
+use async_trait::async_trait;
 use bytes::Bytes;
 use log::debug;
 use parpulse_client::RequestParams;
 use tokio::sync::mpsc::Receiver;
+
+#[async_trait]
+pub trait StorageManager: Send + Sync {
+    async fn get_data(
+        &self,
+        request: RequestParams,
+        is_mem_disk_cache: bool,
+    ) -> ParpulseResult<Receiver<ParpulseResult<Bytes>>>;
+}
 
 /// [`StorageManager`] handles the request from the storage client.
 ///
 /// We should allow concurrent requests fed into the storage manager,
 /// which should be responsible for handling multiple requests at the
 /// same time.
-
-pub struct StorageManager {
+pub struct StorageManagerImpl<C: DataStoreCache> {
     /// We don't use lock here because `data_store_cache` itself should handle the concurrency.
-    data_store_caches: Vec<ParpulseDataStoreReplacer>,
+    data_store_caches: Vec<C>,
 }
 
-impl StorageManager {
-    pub fn new(data_store_caches: Vec<ParpulseDataStoreReplacer>) -> Self {
+impl<C: DataStoreCache> StorageManagerImpl<C> {
+    pub fn new(data_store_caches: Vec<C>) -> Self {
         Self { data_store_caches }
     }
 
@@ -92,6 +101,17 @@ impl StorageManager {
     }
 }
 
+#[async_trait]
+impl<C: DataStoreCache + Send + Sync> StorageManager for StorageManagerImpl<C> {
+    async fn get_data(
+        &self,
+        request: RequestParams,
+        is_mem_disk_cache: bool,
+    ) -> ParpulseResult<Receiver<ParpulseResult<Bytes>>> {
+        self.get_data(request, is_mem_disk_cache).await
+    }
+}
+
 /// fn buffer(&self) -> &[u8]; ensures Iterator has a buffer
 /// This buffer function returns the starting point of the result.
 /// **NOTE**: The result buffer must be **CONTINUOUS** in bytes with the size in Item as its length.
@@ -132,7 +152,7 @@ mod tests {
 
         let data_store_cache =
             MemDiskStoreCache::new(cache, cache_base_path.display().to_string(), None, None);
-        let storage_manager = StorageManager::new(vec![data_store_cache]);
+        let storage_manager = StorageManagerImpl::new(vec![data_store_cache]);
 
         let bucket = "tests-parquet".to_string();
         let keys = vec!["userdata1.parquet".to_string()];
@@ -188,7 +208,7 @@ mod tests {
             Some(mem_cache),
             Some(950),
         );
-        let storage_manager = StorageManager::new(vec![data_store_cache]);
+        let storage_manager = StorageManagerImpl::new(vec![data_store_cache]);
 
         let request_path_small_bucket = "tests-text".to_string();
         let request_path_small_keys = vec!["what-can-i-hold-you-with".to_string()];
@@ -247,7 +267,7 @@ mod tests {
             Some(mem_cache),
             Some(120000),
         );
-        let storage_manager = StorageManager::new(vec![data_store_cache]);
+        let storage_manager = StorageManagerImpl::new(vec![data_store_cache]);
 
         let request_path_bucket1 = "tests-parquet".to_string();
         let request_path_keys1 = vec!["userdata1.parquet".to_string()];
@@ -298,7 +318,7 @@ mod tests {
             None,
             None,
         );
-        let storage_manager = Arc::new(StorageManager::new(vec![data_store_cache]));
+        let storage_manager = Arc::new(StorageManagerImpl::new(vec![data_store_cache]));
 
         let request_path_bucket1 = "tests-parquet".to_string();
         let request_path_keys1 = vec!["userdata1.parquet".to_string()];
@@ -358,7 +378,7 @@ mod tests {
             Some(mem_cache),
             Some(120000),
         );
-        let storage_manager = Arc::new(StorageManager::new(vec![data_store_cache]));
+        let storage_manager = Arc::new(StorageManagerImpl::new(vec![data_store_cache]));
 
         let request_path_bucket1 = "tests-parquet".to_string();
         let request_path_keys1 = vec!["userdata2.parquet".to_string()];
@@ -488,7 +508,7 @@ mod tests {
             );
             data_store_caches.push(data_store_cache);
         }
-        let storage_manager = Arc::new(StorageManager::new(data_store_caches));
+        let storage_manager = Arc::new(StorageManagerImpl::new(data_store_caches));
 
         let request_path_bucket1 = "tests-parquet".to_string();
         let request_path_keys1 = vec!["userdata1.parquet".to_string()];
@@ -538,7 +558,7 @@ mod tests {
             );
             data_store_caches.push(data_store_cache);
         }
-        let storage_manager = Arc::new(StorageManager::new(data_store_caches));
+        let storage_manager = Arc::new(StorageManagerImpl::new(data_store_caches));
 
         let request_path_bucket1 = "tests-parquet".to_string();
         let request_path_keys1 = vec!["userdata2.parquet".to_string()];
@@ -625,7 +645,7 @@ mod tests {
             None,
             None,
         );
-        let storage_manager = Arc::new(StorageManager::new(vec![data_store_cache]));
+        let storage_manager = Arc::new(StorageManagerImpl::new(vec![data_store_cache]));
 
         let request_path_bucket1 = "tests-parquet".to_string();
         let request_path_keys1 = vec!["userdata2.parquet".to_string()];
@@ -660,7 +680,7 @@ mod tests {
             Some(mem_cache),
             Some(120000),
         );
-        let storage_manager = Arc::new(StorageManager::new(vec![data_store_cache]));
+        let storage_manager = Arc::new(StorageManagerImpl::new(vec![data_store_cache]));
 
         let request_path_bucket1 = "tests-parquet".to_string();
         let request_path_keys1 = vec!["userdata2.parquet".to_string()];
