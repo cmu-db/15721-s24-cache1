@@ -35,13 +35,13 @@ async fn route(storage_manager: Arc<impl StorageManager + 'static>, ip_addr: &st
             let storage_manager = storage_manager.clone();
             if params.is_test {
                 info!(
-                    "Received test request for bucket: {}, keys: {:?}",
-                    params.bucket, params.keys
+                    "[Parpulse Logging] received test request {} for bucket: {}, keys: {:?}",
+                    params.request_id, params.bucket, params.keys
                 );
             } else {
                 info!(
-                    "Received request for bucket: {}, keys: {:?}",
-                    params.bucket, params.keys
+                    "[Parpulse Logging] received request {} for bucket: {}, keys: {:?}",
+                    params.request_id, params.bucket, params.keys
                 );
             }
             async move {
@@ -64,7 +64,8 @@ async fn route(storage_manager: Arc<impl StorageManager + 'static>, ip_addr: &st
                             .body(body)
                             .unwrap();
                         info!(
-                            "Request for key {} took: {:?}",
+                            "[Parpulse Timer] request {} for key {} took {:?}",
+                            params.request_id,
                             info_key,
                             start_time.elapsed()
                         );
@@ -144,7 +145,7 @@ pub async fn storage_node_serve(
             let cache_base_path = config.cache_path.unwrap_or(CACHE_BASE_PATH.to_string());
             match config.cache_policy {
                 ParpulseConfigCachePolicy::Lru => {
-                    info!("starting storage node with {} mem-disk cache(s) and LRU cache policy, disk cache size: {}, mem cache size: {}, mem cache file size: {}, max disk reader buffer size: {}", data_store_cache_num, disk_cache_size, mem_cache_size, mem_cache_file_size, max_disk_reader_buffer_size);
+                    info!("[Parpulse Configuration] starting storage node with {} mem-disk cache(s) and LRU cache policy, disk cache size: {}, mem cache size: {}, mem cache file size: {}, max disk reader buffer size: {}", data_store_cache_num, disk_cache_size, mem_cache_size, mem_cache_file_size, max_disk_reader_buffer_size);
                     let mut data_store_caches = Vec::new();
                     for i in 0..data_store_cache_num {
                         let disk_replacer = LruReplacer::new(disk_cache_size);
@@ -162,7 +163,7 @@ pub async fn storage_node_serve(
                     route(storage_manager, ip_addr, port).await;
                 }
                 ParpulseConfigCachePolicy::Lruk => {
-                    info!("starting storage node with {} mem-disk cache(s) and LRU-K cache policy, disk cache size: {}, mem cache size: {}, mem cache file size: {}, max disk reader buffer size: {}", data_store_cache_num, disk_cache_size, mem_cache_size, mem_cache_file_size, max_disk_reader_buffer_size);
+                    info!("[Parpulse Configuration] starting storage node with {} mem-disk cache(s) and LRU-K cache policy, disk cache size: {}, mem cache size: {}, mem cache file size: {}, max disk reader buffer size: {}", data_store_cache_num, disk_cache_size, mem_cache_size, mem_cache_file_size, max_disk_reader_buffer_size);
                     let mut data_store_caches = Vec::new();
                     let k = config.cache_lru_k.unwrap_or(DEFAULT_LRU_K_VALUE);
                     for i in 0..data_store_cache_num {
@@ -190,7 +191,7 @@ pub async fn storage_node_serve(
                 .unwrap_or(DEFAULT_MAX_DISK_READER_BUFFER_SIZE);
             match config.cache_policy {
                 ParpulseConfigCachePolicy::Lru => {
-                    info!("starting storage node with {} disk-only cache(s) and LRU cache policy, disk cache size: {}, max disk reader buffer size: {}", data_store_cache_num, disk_cache_size, max_disk_reader_buffer_size);
+                    info!("[Parpulse Configuration] starting storage node with {} disk-only cache(s) and LRU cache policy, disk cache size: {}, max disk reader buffer size: {}", data_store_cache_num, disk_cache_size, max_disk_reader_buffer_size);
                     let mut data_store_caches = Vec::new();
                     for i in 0..data_store_cache_num {
                         let disk_replacer = LruReplacer::new(disk_cache_size);
@@ -207,7 +208,7 @@ pub async fn storage_node_serve(
                     route(storage_manager, ip_addr, port).await;
                 }
                 ParpulseConfigCachePolicy::Lruk => {
-                    info!("starting storage node with {} disk-only cache(s) and LRU-K cache policy, disk cache size: {}, max disk reader buffer size: {}", data_store_cache_num, disk_cache_size, max_disk_reader_buffer_size);
+                    info!("[Parpulse Configuration] starting storage node with {} disk-only cache(s) and LRU-K cache policy, disk cache size: {}, max disk reader buffer size: {}", data_store_cache_num, disk_cache_size, max_disk_reader_buffer_size);
                     let mut data_store_caches = Vec::new();
                     let k = config.cache_lru_k.unwrap_or(DEFAULT_LRU_K_VALUE);
                     for i in 0..data_store_cache_num {
@@ -235,7 +236,7 @@ pub async fn storage_node_serve(
                 .unwrap_or(DEFAULT_SQLITE_BLOB_READER_BUFFER_SIZE);
             match config.cache_policy {
                 ParpulseConfigCachePolicy::Lru => {
-                    info!("starting storage node with {} sqlite cache(s) and LRU cache policy, cache size: {}, blob reader buffer size: {}", data_store_cache_num, sqlite_cache_size, sqlite_blob_reader_buffer_size);
+                    info!("[Parpulse Configuration] starting storage node with {} sqlite cache(s) and LRU cache policy, cache size: {}, blob reader buffer size: {}", data_store_cache_num, sqlite_cache_size, sqlite_blob_reader_buffer_size);
                     let mut data_store_caches = Vec::new();
                     for i in 0..data_store_cache_num {
                         let replacer = LruReplacer::new(sqlite_cache_size);
@@ -250,7 +251,7 @@ pub async fn storage_node_serve(
                     route(storage_manager, ip_addr, port).await;
                 }
                 ParpulseConfigCachePolicy::Lruk => {
-                    info!("starting storage node with {} sqlite cache(s) and LRU-K cache policy, cache size: {}, blob reader buffer size: {}", data_store_cache_num, sqlite_cache_size, sqlite_blob_reader_buffer_size);
+                    info!("[Parpulse Configuration] starting storage node with {} sqlite cache(s) and LRU-K cache policy, cache size: {}, blob reader buffer size: {}", data_store_cache_num, sqlite_cache_size, sqlite_blob_reader_buffer_size);
                     let k = config.cache_lru_k.unwrap_or(DEFAULT_LRU_K_VALUE);
                     let mut data_store_caches = Vec::new();
                     for i in 0..data_store_cache_num {

@@ -11,7 +11,6 @@ async fn main() {
     {
         println!("Failed to init logger: {:?}", e);
     }
-    info!("starting storage node server...");
     let config = ParpulseConfig::parse();
     storage_node_serve("0.0.0.0", 3030, config).await.unwrap();
 }
