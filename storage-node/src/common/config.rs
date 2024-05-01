@@ -42,6 +42,12 @@ pub struct ParpulseConfig {
     #[clap(long, default_value = None)]
     pub sqlite_cache_size: Option<usize>,
 
-    #[clap( long, default_value = None)]
+    #[clap(long, default_value = None)]
     pub cache_path: Option<String>,
+
+    #[clap(long, default_value = None)]
+    pub max_disk_reader_buffer_size: Option<usize>,
+
+    #[clap(long, default_value = None)]
+    pub sqlite_blob_reader_buffer_size: Option<usize>,
 }

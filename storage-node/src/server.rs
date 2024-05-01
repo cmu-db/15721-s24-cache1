@@ -22,6 +22,8 @@ const DEFAULT_DISK_CACHE_SIZE: usize = 1024 * 1024 * 1024;
 const DEFAULT_SQLITE_CACHE_SIZE: usize = 200 * 1024 * 1024;
 const DEFAULT_MEM_CACHE_MAX_FILE_SIZE: usize = 10 * 1024 * 1024 + 1;
 const DEFAULT_LRU_K_VALUE: usize = 2;
+const DEFAULT_MAX_DISK_READER_BUFFER_SIZE: usize = 100 * 1024 * 1024;
+const DEFAULT_SQLITE_BLOB_READER_BUFFER_SIZE: usize = 1024;
 
 async fn route(storage_manager: Arc<impl StorageManager + 'static>, ip_addr: &str, port: u16) {
     let route = warp::path!("file")
@@ -108,10 +110,13 @@ pub async fn storage_node_serve(
             let mem_cache_file_size = config
                 .mem_cache_file_size
                 .unwrap_or(DEFAULT_MEM_CACHE_MAX_FILE_SIZE);
+            let max_disk_reader_buffer_size = config
+                .max_disk_reader_buffer_size
+                .unwrap_or(DEFAULT_MAX_DISK_READER_BUFFER_SIZE);
             let cache_base_path = config.cache_path.unwrap_or(CACHE_BASE_PATH.to_string());
             match config.cache_policy {
                 ParpulseConfigCachePolicy::Lru => {
-                    info!("starting storage node with {} mem-disk cache(s) and LRU cache policy, disk cache size: {}, mem cache size: {}, mem cache file size: {}", data_store_cache_num, disk_cache_size, mem_cache_size, mem_cache_file_size);
+                    info!("starting storage node with {} mem-disk cache(s) and LRU cache policy, disk cache size: {}, mem cache size: {}, mem cache file size: {}, max disk reader buffer size: {}", data_store_cache_num, disk_cache_size, mem_cache_size, mem_cache_file_size, max_disk_reader_buffer_size);
                     let mut data_store_caches = Vec::new();
                     for i in 0..data_store_cache_num {
                         let disk_replacer = LruReplacer::new(disk_cache_size);
@@ -121,6 +126,7 @@ pub async fn storage_node_serve(
                             i.to_string() + &cache_base_path,
                             Some(mem_replacer),
                             Some(mem_cache_file_size),
+                            max_disk_reader_buffer_size,
                         );
                         data_store_caches.push(data_store_cache);
                     }
@@ -128,7 +134,7 @@ pub async fn storage_node_serve(
                     route(storage_manager, ip_addr, port).await;
                 }
                 ParpulseConfigCachePolicy::Lruk => {
-                    info!("starting storage node with {} mem-disk cache(s) and LRU-K cache policy, disk cache size: {}, mem cache size: {}, mem cache file size: {}", data_store_cache_num, disk_cache_size, mem_cache_size, mem_cache_file_size);
+                    info!("starting storage node with {} mem-disk cache(s) and LRU-K cache policy, disk cache size: {}, mem cache size: {}, mem cache file size: {}, max disk reader buffer size: {}", data_store_cache_num, disk_cache_size, mem_cache_size, mem_cache_file_size, max_disk_reader_buffer_size);
                     let mut data_store_caches = Vec::new();
                     let k = config.cache_lru_k.unwrap_or(DEFAULT_LRU_K_VALUE);
                     for i in 0..data_store_cache_num {
@@ -139,6 +145,7 @@ pub async fn storage_node_serve(
                             i.to_string() + &cache_base_path,
                             Some(mem_replacer),
                             Some(mem_cache_file_size),
+                            max_disk_reader_buffer_size,
                         );
                         data_store_caches.push(data_store_cache);
                     }
@@ -150,9 +157,12 @@ pub async fn storage_node_serve(
         ParpulseConfigDataStore::Disk => {
             let disk_cache_size = config.disk_cache_size.unwrap_or(DEFAULT_DISK_CACHE_SIZE);
             let cache_base_path = config.cache_path.unwrap_or(CACHE_BASE_PATH.to_string());
+            let max_disk_reader_buffer_size = config
+                .max_disk_reader_buffer_size
+                .unwrap_or(DEFAULT_MAX_DISK_READER_BUFFER_SIZE);
             match config.cache_policy {
                 ParpulseConfigCachePolicy::Lru => {
-                    info!("starting storage node with {} disk-only cache(s) and LRU cache policy, disk cache size: {}", data_store_cache_num, disk_cache_size);
+                    info!("starting storage node with {} disk-only cache(s) and LRU cache policy, disk cache size: {}, max disk reader buffer size: {}", data_store_cache_num, disk_cache_size, max_disk_reader_buffer_size);
                     let mut data_store_caches = Vec::new();
                     for i in 0..data_store_cache_num {
                         let disk_replacer = LruReplacer::new(disk_cache_size);
@@ -161,6 +171,7 @@ pub async fn storage_node_serve(
                             i.to_string() + &cache_base_path,
                             None,
                             None,
+                            max_disk_reader_buffer_size,
                         );
                         data_store_caches.push(data_store_cache);
                     }
@@ -168,7 +179,7 @@ pub async fn storage_node_serve(
                     route(storage_manager, ip_addr, port).await;
                 }
                 ParpulseConfigCachePolicy::Lruk => {
-                    info!("starting storage node with {} disk-only cache(s) and LRU-K cache policy, disk cache size: {}", data_store_cache_num, disk_cache_size);
+                    info!("starting storage node with {} disk-only cache(s) and LRU-K cache policy, disk cache size: {}, max disk reader buffer size: {}", data_store_cache_num, disk_cache_size, max_disk_reader_buffer_size);
                     let mut data_store_caches = Vec::new();
                     let k = config.cache_lru_k.unwrap_or(DEFAULT_LRU_K_VALUE);
                     for i in 0..data_store_cache_num {
@@ -178,6 +189,7 @@ pub async fn storage_node_serve(
                             i.to_string() + &cache_base_path,
                             None,
                             None,
+                            max_disk_reader_buffer_size,
                         );
                         data_store_caches.push(data_store_cache);
                     }
@@ -190,16 +202,19 @@ pub async fn storage_node_serve(
             let sqlite_base_path =
                 config.cache_path.unwrap_or(CACHE_BASE_PATH.to_string()) + "sqlite.db3";
             let sqlite_cache_size = config.mem_cache_size.unwrap_or(DEFAULT_SQLITE_CACHE_SIZE);
+            let sqlite_blob_reader_buffer_size = config
+                .sqlite_blob_reader_buffer_size
+                .unwrap_or(DEFAULT_SQLITE_BLOB_READER_BUFFER_SIZE);
             match config.cache_policy {
                 ParpulseConfigCachePolicy::Lru => {
-                    info!("starting storage node with {} sqlite cache(s) and LRU cache policy, cache size: {}", data_store_cache_num, sqlite_cache_size);
+                    info!("starting storage node with {} sqlite cache(s) and LRU cache policy, cache size: {}, blob reader buffer size: {}", data_store_cache_num, sqlite_cache_size, sqlite_blob_reader_buffer_size);
                     let mut data_store_caches = Vec::new();
                     for i in 0..data_store_cache_num {
                         let replacer = LruReplacer::new(sqlite_cache_size);
                         let sqlite_data_cache = SqliteStoreCache::new(
                             replacer,
                             i.to_string() + &sqlite_base_path,
-                            None,
+                            sqlite_blob_reader_buffer_size,
                         )?;
                         data_store_caches.push(sqlite_data_cache);
                     }
@@ -207,7 +222,7 @@ pub async fn storage_node_serve(
                     route(storage_manager, ip_addr, port).await;
                 }
                 ParpulseConfigCachePolicy::Lruk => {
-                    info!("starting storage node with {} sqlite cache(s) and LRU-K cache policy, cache size: {}", data_store_cache_num, sqlite_cache_size);
+                    info!("starting storage node with {} sqlite cache(s) and LRU-K cache policy, cache size: {}, blob reader buffer size: {}", data_store_cache_num, sqlite_cache_size, sqlite_blob_reader_buffer_size);
                     let k = config.cache_lru_k.unwrap_or(DEFAULT_LRU_K_VALUE);
                     let mut data_store_caches = Vec::new();
                     for i in 0..data_store_cache_num {
@@ -215,7 +230,7 @@ pub async fn storage_node_serve(
                         let sqlite_data_cache = SqliteStoreCache::new(
                             replacer,
                             i.to_string() + &sqlite_base_path,
-                            None,
+                            sqlite_blob_reader_buffer_size,
                         )?;
                         data_store_caches.push(sqlite_data_cache);
                     }

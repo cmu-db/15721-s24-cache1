@@ -106,9 +106,10 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>>
         disk_base_path: String,
         mem_replacer: Option<R>,
         mem_max_file_size: Option<usize>,
+        max_disk_reader_buffer_size: usize,
     ) -> Self {
         let disk_manager = DiskManager::default();
-        let disk_store = DiskStore::new(disk_manager, disk_base_path);
+        let disk_store = DiskStore::new(disk_manager, disk_base_path, max_disk_reader_buffer_size);
 
         if mem_replacer.is_some() {
             debug_assert!(mem_max_file_size.is_some());
@@ -614,6 +615,7 @@ mod tests {
             disk_base_path.to_str().unwrap().to_string(),
             Some(LruReplacer::new(120000)),
             Some(10 * 1024),
+            512,
         );
         let bucket = "tests-parquet".to_string();
         let keys = vec!["userdata1.parquet".to_string()];
@@ -652,6 +654,7 @@ mod tests {
             disk_base_path.to_str().unwrap().to_string(),
             None,
             None,
+            512,
         );
         let bucket = "tests-parquet".to_string();
         let keys = vec!["userdata1.parquet".to_string()];
@@ -686,6 +689,7 @@ mod tests {
             disk_base_path.to_str().unwrap().to_string(),
             Some(LruReplacer::new(950)),
             Some(950),
+            512,
         );
         let bucket = "tests-text".to_string();
         let keys = vec!["what-can-i-hold-you-with".to_string()];
@@ -725,6 +729,7 @@ mod tests {
             disk_base_path.to_str().unwrap().to_string(),
             None,
             None,
+            512,
         ));
         let bucket = "tests-parquet".to_string();
         let keys = vec!["userdata2.parquet".to_string()];
@@ -760,6 +765,7 @@ mod tests {
             disk_base_path.to_str().unwrap().to_string(),
             Some(LruReplacer::new(120000)),
             Some(120000),
+            512,
         ));
         let bucket = "tests-parquet".to_string();
         let keys = vec!["userdata1.parquet".to_string()];

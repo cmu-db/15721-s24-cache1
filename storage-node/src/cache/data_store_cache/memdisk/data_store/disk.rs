@@ -15,9 +15,6 @@ use crate::{
     storage_reader::StorageReaderStream,
 };
 
-/// TODO(lanlou): make them configurable.
-/// MAX_DISK_READER_BUFFER_SIZE is 10MB.
-const MAX_DISK_READER_BUFFER_SIZE: usize = 100 * 1024 * 1024;
 const DEFAULT_DISK_CHANNEL_BUFFER_SIZE: usize = 512;
 
 /// [`DiskStore`] stores the contents of remote objects on the local disk.
@@ -25,6 +22,7 @@ pub struct DiskStore {
     disk_manager: DiskManager,
     /// The path to the directory where the data is stored on the disk.
     base_path: String,
+    max_disk_reader_buffer_size: usize,
 }
 
 impl Drop for DiskStore {
@@ -37,7 +35,11 @@ impl Drop for DiskStore {
 }
 
 impl DiskStore {
-    pub fn new(disk_manager: DiskManager, base_path: String) -> Self {
+    pub fn new(
+        disk_manager: DiskManager,
+        base_path: String,
+        max_disk_reader_buffer_size: usize,
+    ) -> Self {
         let mut final_base_path = base_path;
         if !final_base_path.ends_with('/') {
             final_base_path += "/";
@@ -45,6 +47,7 @@ impl DiskStore {
         Self {
             disk_manager,
             base_path: final_base_path,
+            max_disk_reader_buffer_size,
         }
     }
 }
@@ -63,8 +66,8 @@ impl DiskStore {
     {
         // TODO(lanlou): we later may consider the remaining space to decide the buffer size
         let mut buffer_size = self.disk_manager.file_size(key).await? as usize;
-        if buffer_size > MAX_DISK_READER_BUFFER_SIZE {
-            buffer_size = MAX_DISK_READER_BUFFER_SIZE;
+        if buffer_size > self.max_disk_reader_buffer_size {
+            buffer_size = self.max_disk_reader_buffer_size;
         }
         // FIXME: Shall we consider the situation where the data is not found?
         let mut disk_stream = self.disk_manager.disk_read_stream(key, buffer_size).await?;

@@ -119,8 +119,13 @@ mod tests {
         let dir = tmp.path().to_owned();
         let cache_base_path = dir.join("test-storage-manager");
 
-        let data_store_cache =
-            MemDiskStoreCache::new(cache, cache_base_path.display().to_string(), None, None);
+        let data_store_cache = MemDiskStoreCache::new(
+            cache,
+            cache_base_path.display().to_string(),
+            None,
+            None,
+            100 * 1024 * 1024,
+        );
         let storage_manager = StorageManagerImpl::new(vec![data_store_cache]);
 
         let bucket = "tests-parquet".to_string();
@@ -176,6 +181,7 @@ mod tests {
             disk_cache_base_path.display().to_string(),
             Some(mem_cache),
             Some(950),
+            100 * 1024 * 1024,
         );
         let storage_manager = StorageManagerImpl::new(vec![data_store_cache]);
 
@@ -235,6 +241,7 @@ mod tests {
             disk_cache_base_path.display().to_string(),
             Some(mem_cache),
             Some(120000),
+            100 * 1024 * 1024,
         );
         let storage_manager = StorageManagerImpl::new(vec![data_store_cache]);
 
@@ -286,6 +293,7 @@ mod tests {
             disk_cache_base_path.display().to_string(),
             None,
             None,
+            100 * 1024 * 1024,
         );
         let storage_manager = Arc::new(StorageManagerImpl::new(vec![data_store_cache]));
 
@@ -346,6 +354,7 @@ mod tests {
             disk_cache_base_path.display().to_string(),
             Some(mem_cache),
             Some(120000),
+            100 * 1024 * 1024,
         );
         let storage_manager = Arc::new(StorageManagerImpl::new(vec![data_store_cache]));
 
@@ -474,6 +483,7 @@ mod tests {
                 disk_cache_base_path.display().to_string(),
                 Some(mem_cache),
                 Some(120000),
+                100 * 1024 * 1024,
             );
             data_store_caches.push(data_store_cache);
         }
@@ -524,6 +534,7 @@ mod tests {
                 disk_cache_base_path.display().to_string(),
                 Some(mem_cache),
                 Some(120000),
+                100 * 1024 * 1024,
             );
             data_store_caches.push(data_store_cache);
         }
@@ -613,6 +624,7 @@ mod tests {
             disk_cache_base_path.display().to_string(),
             None,
             None,
+            100 * 1024 * 1024,
         );
         let storage_manager = Arc::new(StorageManagerImpl::new(vec![data_store_cache]));
 
@@ -648,6 +660,7 @@ mod tests {
             disk_cache_base_path.display().to_string(),
             Some(mem_cache),
             Some(120000),
+            100 * 1024 * 1024,
         );
         let storage_manager = Arc::new(StorageManagerImpl::new(vec![data_store_cache]));
 
