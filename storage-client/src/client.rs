@@ -25,6 +25,7 @@ const BATCH_SIZE: usize = 1024 * 8;
 const CHANNEL_CAPACITY: usize = 32;
 const PARAM_BUCKET_KEY: &str = "bucket";
 const PARAM_KEYS_KEY: &str = "keys";
+const PARAM_REQUEST_ID_KEY: &str = "request-id";
 
 lazy_static! {
     static ref TABLE_FILE_MAP: HashMap<TableId, String> = {
@@ -123,7 +124,7 @@ impl StorageClientImpl {
                 }
                 let decode_time = decode_start.elapsed();
                 info!(
-                    "[Parpulse Timer] client decoding time for request {}: {:?}",
+                    "[Parpulse Timer] client decode time for request {}: {:?}",
                     request_id, decode_time
                 );
             });
@@ -156,6 +157,7 @@ impl StorageClientImpl {
     fn get_request_url_and_params(
         &self,
         location: (String, Vec<String>),
+        request_id: RequestId,
     ) -> Result<(String, Vec<(&str, String)>)> {
         let scheme = self
             .storage_server_endpoint
@@ -177,6 +179,7 @@ impl StorageClientImpl {
         let params = vec![
             (PARAM_BUCKET_KEY, location.0),
             (PARAM_KEYS_KEY, location.1.join(",")),
+            (PARAM_REQUEST_ID_KEY, request_id.to_string()),
         ];
         Ok((url.to_string(), params))
     }
@@ -198,7 +201,7 @@ impl StorageClientImpl {
 
         // Then we need to send the request to the storage server.
         let client = Client::new();
-        let (url, mut params) = self.get_request_url_and_params(location)?;
+        let (url, mut params) = self.get_request_url_and_params(location, request_id)?;
         params.push(("is_test", "true".to_owned()));
 
         let url = Url::parse_with_params(&url, params)?;
@@ -224,7 +227,7 @@ impl StorageClient for StorageClientImpl {
 
         // Then we need to send the request to the storage server.
         let client = Client::new();
-        let (url, params) = self.get_request_url_and_params(location)?;
+        let (url, params) = self.get_request_url_and_params(location, request_id)?;
         let url = Url::parse_with_params(&url, params)?;
         let get_response_start = Instant::now();
         let response = client.get(url).send().await?;
