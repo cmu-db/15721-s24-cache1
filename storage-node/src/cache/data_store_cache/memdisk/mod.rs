@@ -25,11 +25,6 @@ use self::data_store::{disk::DiskStore, memory::MemStore};
 
 use super::cache_key_from_request;
 
-/// The default maximum single file size for the memory cache.
-/// If the file size exceeds this value, the file will be stored in the disk cache.
-/// TODO(lanlou): make this value configurable.
-pub const DEFAULT_MEM_CACHE_MAX_FILE_SIZE: usize = 1024 * 512;
-
 /// [`MemDiskStoreReplacerKey`] is a path to the remote object store.
 pub type MemDiskStoreReplacerKey = String;
 
@@ -111,13 +106,14 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>>
         disk_base_path: String,
         mem_replacer: Option<R>,
         mem_max_file_size: Option<usize>,
+        max_disk_reader_buffer_size: usize,
     ) -> Self {
         let disk_manager = DiskManager::default();
-        let disk_store = DiskStore::new(disk_manager, disk_base_path);
+        let disk_store = DiskStore::new(disk_manager, disk_base_path, max_disk_reader_buffer_size);
 
         if mem_replacer.is_some() {
-            let mut mem_max_file_size =
-                mem_max_file_size.unwrap_or(DEFAULT_MEM_CACHE_MAX_FILE_SIZE);
+            debug_assert!(mem_max_file_size.is_some());
+            let mut mem_max_file_size = mem_max_file_size.unwrap();
             let replacer_max_capacity = mem_replacer.as_ref().unwrap().max_capacity();
             if mem_max_file_size > replacer_max_capacity {
                 warn!("The maximum file size > replacer's max capacity, so we set maximum file size = 1/5 of the maximum capacity.");
@@ -618,7 +614,8 @@ mod tests {
             LruReplacer::new(1024 * 512),
             disk_base_path.to_str().unwrap().to_string(),
             Some(LruReplacer::new(120000)),
-            None,
+            Some(10 * 1024),
+            512,
         );
         let bucket = "tests-parquet".to_string();
         let keys = vec!["userdata1.parquet".to_string()];
@@ -657,6 +654,7 @@ mod tests {
             disk_base_path.to_str().unwrap().to_string(),
             None,
             None,
+            512,
         );
         let bucket = "tests-parquet".to_string();
         let keys = vec!["userdata1.parquet".to_string()];
@@ -691,6 +689,7 @@ mod tests {
             disk_base_path.to_str().unwrap().to_string(),
             Some(LruReplacer::new(950)),
             Some(950),
+            512,
         );
         let bucket = "tests-text".to_string();
         let keys = vec!["what-can-i-hold-you-with".to_string()];
@@ -730,6 +729,7 @@ mod tests {
             disk_base_path.to_str().unwrap().to_string(),
             None,
             None,
+            512,
         ));
         let bucket = "tests-parquet".to_string();
         let keys = vec!["userdata2.parquet".to_string()];
@@ -765,6 +765,7 @@ mod tests {
             disk_base_path.to_str().unwrap().to_string(),
             Some(LruReplacer::new(120000)),
             Some(120000),
+            512,
         ));
         let bucket = "tests-parquet".to_string();
         let keys = vec!["userdata1.parquet".to_string()];

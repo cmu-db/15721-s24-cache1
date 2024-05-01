@@ -1,13 +1,17 @@
+use clap::Parser;
 use log::info;
-use storage_node::server::storage_node_serve;
-
-// TODO: Add config here.
+use storage_node::{common::config::ParpulseConfig, server::storage_node_serve};
 
 #[tokio::main]
 async fn main() {
-    let _ = env_logger::builder()
+    // Init log.
+    if let Err(e) = env_logger::builder()
         .filter_level(log::LevelFilter::Info)
-        .try_init();
+        .try_init()
+    {
+        println!("Failed to init logger: {:?}", e);
+    }
     info!("starting storage node server...");
-    storage_node_serve("0.0.0.0", 3030).await.unwrap();
+    let config = ParpulseConfig::parse();
+    storage_node_serve("0.0.0.0", 3030, config).await.unwrap();
 }

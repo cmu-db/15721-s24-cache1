@@ -25,10 +25,8 @@ use super::{cache_key_from_request, DataStoreCache};
 
 const SQLITE_CACHE_TABLE_NAME: &str = "parpulse_cache";
 const SQLITE_CACHE_COLUMN_NAME: &str = "content";
-const SQLITE_BLOB_CHANNEL_CAPACITY: usize = 5;
-const SQLITE_BLOB_READER_DEFAULT_BUFFER_SIZE: usize = 1024;
-
 const SQLITE_MAX_BLOB_SIZE: usize = 512 * 1024 * 1024; // 512 MB
+const SQLITE_BLOB_CHANNEL_CAPACITY: usize = 5;
 
 pub type SqliteStoreReplacerKey = String;
 pub struct SqliteStoreReplacerValue {
@@ -62,27 +60,26 @@ pub struct SqliteStoreCache<R: DataStoreReplacer<SqliteStoreReplacerKey, SqliteS
 {
     replacer: Mutex<R>,
     sqlite_base_path: String,
-    buffer_size: usize,
+    reader_buffer_size: usize,
 }
 
 impl<R: DataStoreReplacer<SqliteStoreReplacerKey, SqliteStoreReplacerValue>> SqliteStoreCache<R> {
     pub fn new(
         replacer: R,
         sqlite_base_path: String,
-        buffer_size: Option<usize>,
+        reader_buffer_size: usize,
     ) -> ParpulseResult<Self> {
         let db = Connection::open(&sqlite_base_path)?;
         let create_table_stmt = format!(
             "CREATE TABLE IF NOT EXISTS {} ({} BLOB);",
             SQLITE_CACHE_TABLE_NAME, SQLITE_CACHE_COLUMN_NAME
         );
-        let buffer_size = buffer_size.unwrap_or(SQLITE_BLOB_READER_DEFAULT_BUFFER_SIZE);
         db.execute_batch(&create_table_stmt)?;
 
         Ok(Self {
             replacer: Mutex::new(replacer),
             sqlite_base_path,
-            buffer_size,
+            reader_buffer_size,
         })
     }
 }
@@ -113,7 +110,7 @@ impl<R: DataStoreReplacer<SqliteStoreReplacerKey, SqliteStoreReplacerValue>> Dat
             let (tx, rx) = channel(SQLITE_BLOB_CHANNEL_CAPACITY);
             let row_id = *replacer_value.as_value();
             let sqlite_base_path = self.sqlite_base_path.clone();
-            let buffer_size = self.buffer_size;
+            let buffer_size = self.reader_buffer_size;
 
             tokio::spawn(async move {
                 let db =
@@ -202,7 +199,7 @@ mod tests {
         let cache = SqliteStoreCache::new(
             replacer,
             sqlite_base_path.to_str().unwrap().to_string(),
-            Some(buffer_size),
+            buffer_size,
         )
         .expect("create sqlite store cache failed");
 
