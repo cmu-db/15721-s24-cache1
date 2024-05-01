@@ -226,7 +226,14 @@ impl StorageClient for StorageClientImpl {
         };
 
         // Then we need to send the request to the storage server.
+        let client_init_start = Instant::now();
         let client = Client::new();
+        let client_init_time = client_init_start.elapsed();
+        info!(
+            "[Parpulse Timer] client init time for request {}: {:?}",
+            request_id, client_init_time
+        );
+
         let (url, params) = self.get_request_url_and_params(location, request_id)?;
         let url = Url::parse_with_params(&url, params)?;
         let get_response_start = Instant::now();
