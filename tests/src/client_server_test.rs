@@ -6,7 +6,7 @@ extern crate storage_node;
 #[cfg(test)]
 mod tests {
     use arrow::array::{Float64Array, StringArray};
-    use istziio_client::client_api::{StorageClient, StorageRequest};
+    use istziio_client::client_api::{DataRequest, StorageClient, StorageRequest};
     use parpulse_client::client::StorageClientImpl;
     use serial_test::serial;
     use std::time::Instant;
@@ -38,7 +38,7 @@ mod tests {
             StorageClientImpl::new("http://127.0.0.1:3030", "http://127.0.0.1:3031")
                 .expect("Failed to create storage client.");
         let start_time = Instant::now();
-        let request = StorageRequest::Table(0);
+        let request = StorageRequest::new(0, DataRequest::Table(0));
         let mut receiver = storage_client
             .request_data_test(request)
             .await
@@ -95,7 +95,7 @@ mod tests {
                 .expect("Failed to create storage client.");
         let start_time = Instant::now();
         // Requesting random_data_1m_1.parquet
-        let request = StorageRequest::Table(1);
+        let request = StorageRequest::new(0, DataRequest::Table(1));
         let mut receiver = storage_client
             .request_data(request)
             .await
