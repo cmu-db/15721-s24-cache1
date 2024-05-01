@@ -2,7 +2,6 @@ pub mod data_store;
 
 use std::{collections::HashMap, sync::Arc};
 
-use futures::stream::StreamExt;
 use log::{debug, warn};
 use parpulse_client::RequestParams;
 use tokio::sync::{Mutex, Notify, RwLock};
@@ -91,6 +90,7 @@ pub struct MemDiskStoreCache<
     disk_replacer: Arc<Mutex<R>>,
     mem_replacer: Option<Arc<Mutex<R>>>,
     status_of_keys: RwLock<StatusKeyHashMap>,
+    mem_max_file_size: Option<usize>,
 }
 
 /// This method creates a `MemDiskStoreCache` instance, and memory can be disabled by setting
@@ -128,6 +128,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>>
                 disk_replacer: Arc::new(Mutex::new(disk_replacer)),
                 mem_replacer: Some(Arc::new(Mutex::new(mem_replacer.unwrap()))),
                 status_of_keys: RwLock::new(HashMap::new()),
+                mem_max_file_size: Some(mem_max_file_size),
             }
         } else {
             MemDiskStoreCache {
@@ -136,6 +137,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>>
                 disk_replacer: Arc::new(Mutex::new(disk_replacer)),
                 mem_replacer: None,
                 status_of_keys: RwLock::new(HashMap::new()),
+                mem_max_file_size: None,
             }
         }
     }
@@ -357,15 +359,39 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
             remote_location
         );
 
-        let (mut data_stream, _) = {
+        let (data, remote_location_size) = {
             match request {
                 RequestParams::S3((bucket, keys)) => {
                     let reader = S3Reader::new(bucket.clone(), keys.clone().to_vec()).await;
-                    (reader.into_stream().await?, 0)
+                    let data = reader.read_all().await;
+                    if data.is_err() {
+                        self.notify_waiters_error(&remote_location).await;
+                        return Err(ParpulseError::Internal(format!(
+                            "Failed to read all from s3 for key {}.",
+                            remote_location
+                        )));
+                    }
+                    let mut data_size = 0;
+                    for bytes in &data {
+                        data_size += bytes.len();
+                    }
+                    (data.unwrap(), data_size)
                 }
                 RequestParams::MockS3((bucket, keys)) => {
                     let reader = MockS3Reader::new(bucket.clone(), keys.clone().to_vec()).await;
-                    (reader.into_stream().await?, 0)
+                    let data = reader.read_all().await;
+                    if data.is_err() {
+                        self.notify_waiters_error(&remote_location).await;
+                        return Err(ParpulseError::Internal(format!(
+                            "Failed to read all from mocks3 for key {}.",
+                            remote_location
+                        )));
+                    }
+                    let mut data_size = 0;
+                    for bytes in &data {
+                        data_size += bytes.len();
+                    }
+                    (data.unwrap(), data_size)
                 }
             }
         };
@@ -376,35 +402,25 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
         let mut bytes_mem_written = 0;
         // If the mem_store is enabled, first try to write the data to memory.
         // Note: Only file which size < mem_max_file_size can be written to memory.
-        if let Some(mem_store) = &self.mem_store {
-            loop {
-                match data_stream.next().await {
-                    Some(Ok(bytes)) => {
-                        bytes_mem_written += bytes.len();
-                        // TODO: Need to write the data to network.
-                        // TODO(lanlou): we need benchmark future, to put this lock outside the loop.
-                        if let Some((bytes_vec, _)) = mem_store
-                            .write()
-                            .await
-                            .write_data(remote_location.clone(), bytes)
-                        {
-                            // If write_data returns something, it means the file size is too large
-                            // to fit in the memory. We should put it to disk cache.
-                            debug!(
-                                "MemDiskStore put_data_to_cache: data size for {} not fit in memory, transfer data to disk",
-                                remote_location
-                            );
-                            bytes_to_disk = Some(bytes_vec);
-                            break;
-                        }
-                    }
-                    Some(Err(e)) => {
-                        // TODO(lanlou): Every time it returns an error, I need to manually add this clean code...
-                        // How to improve?
-                        self.notify_waiters_error(&remote_location).await;
-                        return Err(e);
-                    }
-                    None => break,
+        if self.mem_max_file_size.is_some()
+            && remote_location_size <= self.mem_max_file_size.unwrap()
+        {
+            let mem_store = self.mem_store.as_ref().unwrap();
+            for bytes in data {
+                bytes_mem_written += bytes.len();
+                if let Some((bytes_vec, _)) = mem_store
+                    .write()
+                    .await
+                    .write_data(remote_location.clone(), bytes)
+                {
+                    // If write_data returns something, it means the file size is too large
+                    // to fit in the memory. We should put it to disk cache.
+                    debug!(
+                    "MemDiskStore put_data_to_cache: data size for {} not fit in memory, transfer data to disk",
+                    remote_location
+                );
+                    bytes_to_disk = Some(bytes_vec);
+                    break;
                 }
             }
 
@@ -532,6 +548,8 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
                     .await;
                 return Ok(bytes_mem_written);
             }
+        } else {
+            bytes_to_disk = Some(data);
         }
 
         // If the data is not written to memory_cache successfully, then cache it to disk.
@@ -539,7 +557,7 @@ impl<R: DataStoreReplacer<MemDiskStoreReplacerKey, MemDiskStoreReplacerValue>> D
         let disk_store_key = self.disk_store.data_store_key(&remote_location);
         let data_size_wrap = self
             .disk_store
-            .write_data(disk_store_key.clone(), bytes_to_disk, Some(data_stream))
+            .write_data(disk_store_key.clone(), bytes_to_disk, None)
             .await;
         if let Err(e) = data_size_wrap {
             self.notify_waiters_error(&remote_location).await;
