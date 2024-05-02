@@ -96,6 +96,16 @@ impl StorageClientImpl {
             let temp_dir = tempdir()?;
             let file_path = temp_dir.path().join("tmp.parquet");
             let mut file = File::create(&file_path)?;
+            let server_time = response
+                .headers()
+                .get("Server-Time")
+                .map(|v| v.to_str().unwrap())
+                .ok_or_else(|| anyhow!("Failed to get server time."))?;
+
+            info!(
+                "[Parpulse Timer] storage server time for request {}: {}",
+                request_id, server_time
+            );
             let mut stream = response.bytes_stream();
             while let Some(chunk) = stream.next().await {
                 let chunk = chunk?;
