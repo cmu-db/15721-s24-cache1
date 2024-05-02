@@ -51,6 +51,10 @@ impl<C: DataStoreCache> StorageManagerImpl<C> {
         let cache_key = cache_key_from_request(&request);
         let hash = calculate_hash_crc32fast(cache_key.as_bytes());
         let cache_index = hash % self.data_store_caches.len();
+        info!(
+            "[Parpulse Logging] request {} cache key {} dispatched to the data store index {}",
+            request_id, cache_key, cache_index
+        );
         let data_store_cache = self.data_store_caches.get(cache_index).unwrap();
 
         debug!(
