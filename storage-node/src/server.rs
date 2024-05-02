@@ -60,7 +60,7 @@ async fn route(storage_manager: Arc<impl StorageManager + 'static>, ip_addr: &st
                     Ok(data_rx) => {
                         let stream = ReceiverStream::new(data_rx);
                         let body = warp::hyper::Body::wrap_stream(stream);
-                        let server_time = format!("{:?}", start_time.elapsed());
+                        let server_time = format!("{}", start_time.elapsed().as_micros());
                         let response = warp::http::Response::builder()
                             .header("Content-Type", "text/plain")
                             .header("Server-Time", server_time.clone())
