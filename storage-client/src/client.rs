@@ -103,7 +103,7 @@ impl StorageClientImpl {
                 .ok_or_else(|| anyhow!("Failed to get server time."))?;
 
             info!(
-                "[Parpulse Timer] storage server time for request {}: {}",
+                "[Parpulse Timer] storage server time for request {}: {}µs",
                 request_id, server_time
             );
             let mut stream = response.bytes_stream();

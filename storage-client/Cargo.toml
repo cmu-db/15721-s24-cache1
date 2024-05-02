@@ -1,6 +1,6 @@
 [package]
 name = "parpulse-client"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 authors = [
     "Yuanxin Cao <caoyuanxin0531@outlook.com>",
