@@ -66,10 +66,6 @@ async fn route(storage_manager: Arc<impl StorageManager + 'static>, ip_addr: &st
                             .header("Server-Time", server_time.clone())
                             .body(body)
                             .unwrap();
-                        info!(
-                            "[Parpulse Timer] storage server time for request {}: {}",
-                            request_id, server_time
-                        );
                         Ok::<_, Rejection>(warp::reply::with_status(
                             response,
                             warp::http::StatusCode::OK,
