@@ -96,6 +96,16 @@ impl StorageClientImpl {
             let temp_dir = tempdir()?;
             let file_path = temp_dir.path().join("tmp.parquet");
             let mut file = File::create(&file_path)?;
+            let server_time = response
+                .headers()
+                .get("Server-Time")
+                .map(|v| v.to_str().unwrap())
+                .ok_or_else(|| anyhow!("Failed to get server time."))?;
+
+            info!(
+                "[Parpulse Timer] storage server time for request {}: {}",
+                request_id, server_time
+            );
             let mut stream = response.bytes_stream();
             while let Some(chunk) = stream.next().await {
                 let chunk = chunk?;
@@ -226,14 +236,7 @@ impl StorageClient for StorageClientImpl {
         };
 
         // Then we need to send the request to the storage server.
-        let client_init_start = Instant::now();
         let client = Client::new();
-        let client_init_time = client_init_start.elapsed();
-        info!(
-            "[Parpulse Timer] client init time for request {}: {:?}",
-            request_id, client_init_time
-        );
-
         let (url, params) = self.get_request_url_and_params(location, request_id)?;
         let url = Url::parse_with_params(&url, params)?;
         let get_response_start = Instant::now();
