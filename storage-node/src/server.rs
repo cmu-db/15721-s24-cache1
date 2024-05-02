@@ -1,5 +1,6 @@
 use log::{info, warn};
 use parpulse_client::{RequestParams, S3Request};
+
 use std::sync::Arc;
 use std::time::Instant;
 use std::{net::IpAddr, sync::Mutex};
@@ -47,7 +48,6 @@ async fn route(storage_manager: Arc<impl StorageManager + 'static>, ip_addr: &st
             async move {
                 let bucket = params.bucket;
                 let keys = params.keys;
-                let info_key = bucket.clone() + "/" + &keys;
                 let request = if params.is_test {
                     RequestParams::MockS3((bucket, vec![keys]))
                 } else {
@@ -60,15 +60,15 @@ async fn route(storage_manager: Arc<impl StorageManager + 'static>, ip_addr: &st
                     Ok(data_rx) => {
                         let stream = ReceiverStream::new(data_rx);
                         let body = warp::hyper::Body::wrap_stream(stream);
+                        let server_time = format!("{:?}", start_time.elapsed());
                         let response = warp::http::Response::builder()
                             .header("Content-Type", "text/plain")
+                            .header("Server-Time", server_time.clone())
                             .body(body)
                             .unwrap();
                         info!(
-                            "[Parpulse Timer] request {} for key {} takes {:?}",
-                            request_id,
-                            info_key,
-                            start_time.elapsed()
+                            "[Parpulse Timer] storage server time for request {}: {}",
+                            request_id, server_time
                         );
                         Ok::<_, Rejection>(warp::reply::with_status(
                             response,
